@@ -1,4 +1,6 @@
-# Polarity - Dataminr Pulse Integration
+# Polarity - Dataminr Pulse (Limited) Integration
+
+This is a limited version of the full [Dataminr Pulse Integration](https://github.com/polarityio/dataminr).  Restrictions include only on `Flash` and `Urgent` alerts.  Search will only show that there are alert matches if you were to use the full version.
 
 Dataminr delivers the earliest warnings on high impact events and critical information far in advance of other sources.
 
@@ -32,6 +34,12 @@ Pin Dataminr Alerts to the top of the Polarity UI
 ### Filter Lists to Watch
 Filter the lists to watch for alerts
 - Default: `[]` (all lists)
+- User Editable: Yes
+- Multiple Selection: Yes
+
+### Filter Alert Types
+Filter the type of alert - limited
+- Default: [`flash`, `urgent`]
 - User Editable: Yes
 - Multiple Selection: Yes
 
