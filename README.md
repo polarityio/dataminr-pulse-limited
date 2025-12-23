@@ -1,6 +1,6 @@
 # Polarity - Dataminr Pulse (Limited) Integration
 
-This is a limited version of the full [Dataminr Pulse Integration](https://github.com/polarityio/dataminr).  Restrictions include only on `Flash` and `Urgent` alerts.  Search will only show that there are alert matches if you were to use the full version.
+This is a limited version of the full [Dataminr Pulse Integration](https://github.com/polarityio/dataminr).  Restrictions include: Alerts only on `Flash` and `Urgent`.  Search will only show that there are alert matches.
 
 Dataminr delivers the earliest warnings on high impact events and critical information far in advance of other sources.
 
