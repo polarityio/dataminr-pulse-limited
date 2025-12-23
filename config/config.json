@@ -1,0 +1,143 @@
+{
+  "polarityIntegrationUuid": "b143402f-4a32-4d27-ba32-b75292f451bf",
+  "name": "Dataminr Pulse (Limited)",
+  "acronym": "DMPL",
+  "description": "Limited version of the Dataminr Pulse integration. Search Dataminr Pulse by all entities to hits. Pin Dataminr Pulse incoming alerts (Flash and Urgent only) to the top of Polarity for instant notification.",
+  "entityTypes": [
+    "domain",
+    "IPv4",
+    "IPv6",
+    "IPv4CIDR",
+    "email",
+    "MD5",
+    "SHA1",
+    "SHA256",
+    "cve",
+    "url"
+  ],
+  "customTypes": [
+    {
+      "key": "allText",
+      "regex": "\\S[\\s\\S]{2,256}\\S"
+    }
+  ],
+  "javascript": [
+    "./client/dataminr.js"
+  ],
+  "styles": [
+    "./client/styles.less"
+  ],
+  "defaultColor": "light-blue",
+  "onDemandOnly": true,
+  "block": {
+    "component": {
+      "file": "./client/block.js"
+    },
+    "template": {
+      "file": "./client/block.hbs"
+    }
+  },
+  "request": {
+    "cert": "",
+    "key": "",
+    "passphrase": "",
+    "ca": "",
+    "proxy": ""
+  },
+  "logging": {
+    "level": "info"
+  },
+  "options": [
+    {
+      "key": "stickyAlerts",
+      "name": "Pin Dataminr Alerts",
+      "description": "Pin Dataminr Alerts to the top of the Polarity UI. User provides option value.",
+      "default": true,
+      "type": "boolean",
+      "userCanEdit": true,
+      "adminOnly": false
+    },
+    {
+      "key": "setListsToWatch",
+      "name": "Filter Lists",
+      "description": "Filter the lists for pinned alerts",
+      "type": "select",
+      "default": [],
+      "userCanEdit": true,
+      "adminOnly": false,
+      "multiple": true,
+      "options": []
+    },
+    {
+      "key": "setAlertTypesToWatch",
+      "name": "Filter Alert Types",
+      "description": "Filter the alert types retrieved for pinned alerts",
+      "type": "select",
+      "default": [
+        {
+          "value": "flash",
+          "display": "Flash"
+        },
+        {
+          "value": "urgent",
+          "display": "Urgent"
+        }
+      ],
+      "userCanEdit": false,
+      "adminOnly": true,
+      "multiple": true,
+      "options": [
+        {
+          "value": "flash",
+          "display": "Flash"
+        },
+        {
+          "value": "urgent",
+          "display": "Urgent"
+        }
+      ]
+    },
+    {
+      "key": "url",
+      "name": "Dataminr API URL",
+      "description": "The base URL of the Dataminr API including the schema (i.e., https://)",
+      "default": "https://api.dataminr.com",
+      "type": "text",
+      "userCanEdit": false,
+      "adminOnly": true
+    },
+    {
+      "key": "clientId",
+      "name": "Client ID",
+      "description": "Your Client ID Credential",
+      "default": "",
+      "type": "text",
+      "userCanEdit": false,
+      "adminOnly": true
+    },
+    {
+      "key": "clientSecret",
+      "name": "Client Secret",
+      "description": "Your Client Secret Credential",
+      "default": "",
+      "type": "password",
+      "userCanEdit": false,
+      "adminOnly": true
+    },
+    {
+      "key": "pollInterval",
+      "name": "Poll Interval",
+      "description": "The interval in seconds for the server to poll for new Alerts",
+      "default": 60,
+      "type": "number",
+      "userCanEdit": false,
+      "adminOnly": true,
+      "validators": [
+        {
+          "type": "sec",
+          "value": 30
+        }
+      ]
+    }
+  ]
+}
