@@ -1,6 +1,6 @@
 {
   "name": "dataminr-pulse-free",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "main": "./integration.js",
   "private": true,
   "dependencies": {
@@ -8,6 +8,6 @@
     "handlebars": "^4.7.8",
     "luxon": "^3.4.4",
     "node-cache": "^5.1.2",
-    "polarity-integration-utils": "^2.0.0"
+    "polarity-integration-utils": "^3.0.0"
   }
 }

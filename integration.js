@@ -110,10 +110,7 @@ const doLookup = async (entities, options, cb) => {
           ? {
               summary: [`Alerts: ${alertCount}`],
               details: {
-                limitedMessage: {
-                  text: 'Pulse has additional alerts! Interested in gaining more from Dataminr, contact us at ',
-                  email: 'sales@dataminr.com'
-                },
+                trialSearch: true,
                 alertCount: alertCount,
                 alerts: [] // Empty array - no real results for trial
               }
@@ -364,7 +361,7 @@ const onMessage = async (payload, options, cb) => {
 
         // Merge timezone from payload into options if provided
         const optionsWithTimezone = payloadTimezone
-          ? Object.assign({}, options, { timezone: payloadTimezone })
+          ? Object.assign({}, options, { timezone: payloadTimezone, trialAlert: true })
           : options;
 
         renderAlertDetail(alertToRender, optionsWithTimezone)

@@ -1,9 +1,15 @@
 {{! Alert Template used for both Search and Notification Details Panels }}
 <div class="dataminr-alert-search-details dm-jewel-theme-integration">
-  {{#if details.limitedMessage}}
-    <div class="dataminr-trial-message" style="padding: 16px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; margin-bottom: 16px;">
+  {{#if details.trialSearch}}
+    <div class="dataminr-trial-search" style="padding: 16px; background-color: rgba(255, 255, 255, 0.05); border-radius: 4px; margin-bottom: 16px;">
       <p style="margin: 0; color: #F5F6F9; font-size: 14px; line-height: 1.5;">
-        {{details.limitedMessage.text}}<a href="mailto:{{details.limitedMessage.email}}" class="p-link">{{details.limitedMessage.email}}</a>
+        <svg height="18" width="18" viewBox="0 2 24 24" fill="none">
+          <path
+            d="M19 9L20.25 6.25L23 5L20.25 3.75L19 1L17.75 3.75L15 5L17.75 6.25L19 9ZM11.5 9.5L9 4L6.5 9.5L1 12L6.5 14.5L9 20L11.5 14.5L17 12L11.5 9.5ZM19 15L17.75 17.75L15 19L17.75 20.25L19 23L20.25 20.25L23 19L20.25 17.75L19 15Z"
+            fill="currentColor"
+          />
+        </svg>
+        Pulse has additional AI-powered alerts! <a href="https://www.dataminr.com/products/pulse/cyber-risk/request-a-demo/" target="_blank">Schedule a demo</a> to learn more.
       </p>
     </div>
   {{/if}}
@@ -409,7 +415,7 @@
         {{#if alert.metadata}}
           <div class="dataminr-alert-metadata">
             <div class="dataminr-alert-metadata-header">
-              <h3 class="dataminr-alert-metadata-header-title">Key Points</h3>
+              <h3 class="dataminr-alert-metadata-header-title">Key Points[{{ alert.trailAlert }}]</h3>
               <button
                 class="dataminr-alert-metadata-search-btn"
                 data-metadata-search="true"
@@ -568,6 +574,19 @@
               >{{alert.alertTopicsFormatted}}</span>
             </div>
           {{/if}}
+        {{/if}}
+        {{#if alert.trialAlert}}
+          <div class="dataminr-trial-alert">
+            <hr />
+            <svg height="18" width="18" viewBox="0 2 24 24" fill="none">
+              <path
+                d="M19 9L20.25 6.25L23 5L20.25 3.75L19 1L17.75 3.75L15 5L17.75 6.25L19 9ZM11.5 9.5L9 4L6.5 9.5L1 12L6.5 14.5L9 20L11.5 14.5L17 12L11.5 9.5ZM19 15L17.75 17.75L15 19L17.75 20.25L19 23L20.25 20.25L23 19L20.25 17.75L19 15Z"
+                fill="currentColor"
+              />
+            </svg>
+            Pulse has additional AI-powered alerts! 
+            <a href="https://www.dataminr.com/products/pulse/cyber-risk/request-a-demo/" target="_blank">Schedule a demo</a> to learn more.
+          </div>
         {{/if}}
       </div>
       <div class="dataminr-entity-details-container" style="display: none;">

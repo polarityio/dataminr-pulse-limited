@@ -109,6 +109,7 @@ const getToken = async (options, forceRefresh = false) => {
       method: 'POST',
       url: `${options.url}/auth/v1/token`,
       headers: {
+        'X-Application-Name': 'Polarity',
         'Content-Type': 'application/x-www-form-urlencoded',
         accept: 'application/json'
       },
@@ -172,6 +173,7 @@ const requestWithDefaults = async ({ route, options, maxRetries = 3, ...requestO
         ...requestOptions,
         url: `${options.url}/${route}`,
         headers: {
+          'X-Application-Name': 'Polarity',
           Authorization: `Bearer ${token}`,
           ...(requestOptions.headers || {})
         },

@@ -862,7 +862,8 @@ async function processAlertData(alert, options) {
       : '',
     alertTopics: alert.alertTopics || null,
     alertTopicsFormatted: alert.alertTopics ? formatTopicsValue(alert.alertTopics) : '',
-    metadata: processMetadata(alert)
+    metadata: processMetadata(alert),
+    trialAlert: options.trialAlert || false
   };
 
   // Process live brief
