@@ -7,26 +7,35 @@ const { validateOptions } = require('./server/userOptions');
 const { removePrivateIps } = require('./server/dataTransformations');
 const {
   pollAlerts,
+  pollLists,
   resetPollingState,
   searchAlerts,
-  getAlertById
+  getAlertById,
+  parseListConfig
 } = require('./server/alerts');
-const { getCachedAlerts, getPollingState } = require('./server/alerts/stateManager');
+const {
+  getCachedAlerts,
+  getLatestAlertTimestamp,
+  getCachedLists
+} = require('./server/alerts/stateManager');
 const { getAlerts } = require('./server/alerts/getAlerts');
 const { setLogger: setRequestLogger } = require('./server/request');
 const {
   renderAlertDetail,
   renderAlertNotification
 } = require('./server/templateRenderer');
-const { getLists } = require('./server/alerts/getLists');
 
 const assembleLookupResults = require('./server/assembleLookupResults');
+const {
+  DEFAULT_ALERT_TYPES_TO_WATCH,
+  TRIAL_MODE,
+  LISTS_POLL_INTERVAL_MS
+} = require('./server/constants');
 
-let pollingInterval = null;
 let Logger = null;
+let alertPollingInterval = null;
+let listsPollingInterval = null;
 let pollingInitialized = false;
-const routePrefix = 'pulse';
-const defaultAlertTypesToWatch = ['flash', 'urgent', 'alert'];
 
 /**
  * Initialize polling for alerts
@@ -47,27 +56,27 @@ const initializePolling = async (options) => {
 
   // Reset polling state on first initialization
   resetPollingState();
+  pollAlerts(options);
+  pollLists(options);
 
-  // Add route prefix to options
-  const optionsWithRoute = { ...options, routePrefix: routePrefix };
+  // Set up polling interval for alerts - admin configurable
+  const alertPollIntervalMs = options.pollInterval * 1000; // Convert seconds to milliseconds
 
-  // Start polling immediately
-  try {
-    await pollAlerts(optionsWithRoute);
-  } catch (error) {
-    Logger.error({ error }, 'Initial poll failed, but continuing with interval polling');
-  }
-
-  // Set up polling interval
-  const pollIntervalMs = options.pollInterval * 1000; // Convert seconds to milliseconds
-
-  pollingInterval = setInterval(async () => {
+  alertPollingInterval = setInterval(async () => {
     try {
-      await pollAlerts(optionsWithRoute);
+      pollAlerts(options);
     } catch (error) {
       Logger.error({ error }, 'Error in polling interval');
     }
-  }, pollIntervalMs);
+  }, alertPollIntervalMs);
+
+  listsPollingInterval = setInterval(async () => {
+    try {
+      pollLists(options);
+    } catch (error) {
+      Logger.error({ error }, 'Error in lists polling interval');
+    }
+  }, LISTS_POLL_INTERVAL_MS);
 
   pollingInitialized = true;
 
@@ -87,39 +96,43 @@ const doLookup = async (entities, options, cb) => {
     Logger.debug({ entities }, 'Entities');
 
     const searchableEntities = removePrivateIps(entities);
-
-    // Add route prefix to options
-    const optionsWithRoute = { ...options, routePrefix: routePrefix };
-    const alerts = await searchAlerts(searchableEntities, optionsWithRoute);
+    const alerts = await searchAlerts(searchableEntities, options);
 
     Logger.trace({ alerts, searchableEntities });
 
-    // For trial version: return count with trial message instead of real results
-    const lookupResults = entities.map((entity) => {
-      // Find alerts for this entity (alerts structure: [{resultId, result: [...]}, ...])
-      const entityResult = alerts.find(
-        (alertResult) => alertResult.resultId === entity.value
-      );
-      const alertCount = entityResult && Array.isArray(entityResult.result)
-        ? entityResult.result.length
-        : 0;
+    let lookupResults;
+    if (!TRIAL_MODE) {
+      lookupResults = await assembleLookupResults(entities, alerts, options);
+    } else {
+      // For trial version: return count with trial message instead of real results
+      lookupResults = entities.map((entity) => {
+        // Find alerts for this entity (alerts structure: [{resultId, result: [...]}, ...])
+        const entityResult = alerts.find(
+          (alertResult) => alertResult.resultId === entity.value
+        );
+        const alertCount =
+          entityResult && Array.isArray(entityResult.result)
+            ? entityResult.result.length
+            : 0;
 
-      return {
-        entity,
-        data: alertCount > 0
-          ? {
-              summary: [`Alerts: ${alertCount}`],
-              details: {
-                trialSearch: true,
-                alertCount: alertCount,
-                alerts: [] // Empty array - no real results for trial
-              }
-            }
-          : null
-      };
-    });
+        return {
+          entity,
+          data:
+            alertCount > 0
+              ? {
+                  summary: [`Alerts: ${alertCount}`],
+                  details: {
+                    trialSearch: true,
+                    alertCount: alertCount,
+                    alerts: [] // Empty array - no real results for trial
+                  }
+                }
+              : null
+        };
+      });
+    }
 
-    Logger.info({ lookupResults }, 'Lookup Results (Limited Mode)');
+    Logger.trace({ lookupResults }, 'Lookup Results');
 
     cb(null, lookupResults);
   } catch (error) {
@@ -151,12 +164,56 @@ const startup = async (logger) => {
  * @returns {void}
  */
 const shutdown = () => {
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
+  if (alertPollingInterval) {
+    clearInterval(alertPollingInterval);
+    alertPollingInterval = null;
+  }
+  if (listsPollingInterval) {
+    clearInterval(listsPollingInterval);
+    listsPollingInterval = null;
+  }
+  if (pollingInitialized) {
     pollingInitialized = false;
     Logger.info('Polling stopped');
   }
+};
+
+/**
+ * Create a filter function for alert types based on configuration
+ * @param {Object} options - Configuration options
+ * @returns {Function} Filter function that returns true if alert should be included
+ */
+const createAlertTypeFilter = (options) => {
+  // Get configured alert types to watch (default to all if not configured)
+  const alertTypesToWatch =
+    options.setAlertTypesToWatch && options.setAlertTypesToWatch.length > 0
+      ? options.setAlertTypesToWatch
+      : DEFAULT_ALERT_TYPES_TO_WATCH;
+
+  // Normalize to lowercase for comparison
+  // Handle both string arrays and object arrays with {value, display} structure
+  const normalizedAlertTypesToWatch = alertTypesToWatch.map((type) => {
+    // If it's an object with a value property, use that
+    if (type && typeof type === 'object' && type.value) {
+      return typeof type.value === 'string'
+        ? type.value.toLowerCase()
+        : String(type.value).toLowerCase();
+    }
+    // Otherwise treat as string
+    return typeof type === 'string' ? type.toLowerCase() : String(type).toLowerCase();
+  });
+
+  // Return filter function that checks if alert type should be included
+  return (alert) => {
+    if (!normalizedAlertTypesToWatch || normalizedAlertTypesToWatch.length === 0) {
+      return true; // Include all if no filter configured
+    }
+    const alertTypeName =
+      alert.alertType && alert.alertType.name
+        ? alert.alertType.name.toLowerCase()
+        : 'alert';
+    return normalizedAlertTypesToWatch.indexOf(alertTypeName) !== -1;
+  };
 };
 
 /**
@@ -173,7 +230,8 @@ const shutdown = () => {
 const onMessage = async (payload, options, cb) => {
   try {
     // Initialize polling on first message if not already initialized
-    await initializePolling(options);
+    initializePolling(options);
+    const listIds = parseListConfig(options.setListsToWatch);
 
     const { action } = payload;
 
@@ -186,130 +244,64 @@ const onMessage = async (payload, options, cb) => {
     switch (action) {
       case 'getAlerts':
         // Extract parameters from payload
-        const { sinceTimestamp, count: countParam, listIds: listIdsParam } = payload;
+        const { sinceTimestamp, count: countParam } = payload;
+
+        // Use the latest alert timestamp for filtering consistency
+        const lastAlertTimestamp = getLatestAlertTimestamp() || new Date().toISOString();
 
         // Parse count parameter (from URL or payload)
         const alertCount = countParam ? parseInt(countParam, 10) : null;
 
-        // Parse listIds (comma-separated string or array)
-        let listIds = null;
-        if (listIdsParam) {
-          if (typeof listIdsParam === 'string') {
-            // Parse comma-separated string, filter out empty strings and '0'
-            listIds = listIdsParam
-              .split(',')
-              .map((id) => id.trim())
-              .filter((id) => id && id !== '0');
-          } else if (Array.isArray(listIdsParam)) {
-            // Filter out empty strings and '0'
-            listIds = listIdsParam.filter((id) => id && id !== '0');
-          }
-          // If listIds is empty after filtering, set to null (no filtering)
-          if (listIds.length === 0) {
-            listIds = null;
-          }
-        }
-
         // Use provided timestamp or default to current time if not provided
-        const queryTimestamp = sinceTimestamp || new Date().toISOString();
+        // If alertCount is provided, don't filter by timestamp (return null)
+        const alertFilterTimestamp = alertCount
+          ? null
+          : sinceTimestamp || new Date().toISOString();
 
-        // Get configured alert types to watch (default to all if not configured)
-        const alertTypesToWatch = (options.setAlertTypesToWatch && 
-                                   options.setAlertTypesToWatch.length > 0)
-          ? options.setAlertTypesToWatch
-          : defaultAlertTypesToWatch;
-        // Normalize to lowercase for comparison
-        // Handle both string arrays and object arrays with {value, display} structure
-        const normalizedAlertTypesToWatch = alertTypesToWatch.map((type) => {
-          // If it's an object with a value property, use that
-          if (type && typeof type === 'object' && type.value) {
-            return typeof type.value === 'string' ? type.value.toLowerCase() : String(type.value).toLowerCase();
-          }
-          // Otherwise treat as string
-          return typeof type === 'string' ? type.toLowerCase() : String(type).toLowerCase();
-        });
-
-        // Helper function to check if alert type should be included
-        const shouldIncludeAlert = (alert) => {
-          if (!normalizedAlertTypesToWatch || normalizedAlertTypesToWatch.length === 0) {
-            return true; // Include all if no filter configured
-          }
-          const alertTypeName = alert.alertType && alert.alertType.name
-            ? alert.alertType.name.toLowerCase()
-            : 'alert';
-          return normalizedAlertTypesToWatch.indexOf(alertTypeName) !== -1;
-        };
+        // Create alert type filter function
+        const alertTypeFilter = createAlertTypeFilter(options);
 
         try {
           // Get alerts from global cache (filtered by listIds if provided)
-          const cachedAlerts = getCachedAlerts(listIds);
-
+          const cachedAlerts = getCachedAlerts(listIds, alertFilterTimestamp);
           // Filter cached alerts by alert type
-          const filteredCachedAlerts = cachedAlerts.filter(shouldIncludeAlert);
+          let alerts = cachedAlerts.filter(alertTypeFilter);
 
           // Check if we need to query API (only if count is requested and cache doesn't have enough)
-          const needsApiQuery = alertCount && filteredCachedAlerts.length < alertCount;
+          if (alertCount && alerts.length < alertCount) {
+            try {
+              // Query API for alerts (count overrides timestamp for initial query)
+              const { alerts: apiAlerts } = await getAlerts(options, {
+                listIds: listIds,
+                pageSize: alertCount
+              });
 
-          let alerts;
-
-          if (needsApiQuery) {
-            // Create options with listIds and route prefix for API query
-            const queryOptions = {
-              ...options,
-              listIds: listIds,
-              routePrefix: routePrefix
-            };
-
-            // Query API for alerts (count overrides timestamp for initial query)
-            const { alerts: apiAlerts } = await getAlerts(
-              queryOptions,
-              null, // No pagination cursor for user queries
-              alertCount, // Count parameter (overrides timestamp if provided)
-              null // Timestamp ignored when count is provided
-            );
-
-            // Filter API alerts by alert type
-            alerts = apiAlerts.filter(shouldIncludeAlert);
-          } else {
-            // Use filtered cached alerts (already sorted newest first and filtered by listIds and alert type)
-            alerts = filteredCachedAlerts;
-
-            // Filter alerts by timestamp if timestamp is provided and count is not
-            // Since alerts are sorted newest first, we can use early termination
-            if (queryTimestamp && !alertCount) {
-              const sinceDate = new Date(queryTimestamp).getTime();
-              // Use early termination since alerts are sorted newest first
-              // Once we find an alert older than the timestamp, we can stop
-              const filteredAlerts = [];
-              for (let i = 0; i < alerts.length; i++) {
-                const alert = alerts[i];
-                if (!alert.alertTimestamp) {
-                  continue; // Skip alerts without timestamps
-                }
-                const alertTime = new Date(alert.alertTimestamp).getTime();
-                if (alertTime > sinceDate) {
-                  filteredAlerts.push(alert);
-                } else {
-                  // Alerts are sorted newest first, so we can stop here
-                  break;
-                }
+              // Filter API alerts by alert type
+              // Note: Since we currently filter by alert type after getAlerts, we could have less than the requested count
+              alerts = apiAlerts.filter(alertTypeFilter);
+            } catch (apiError) {
+              const errorStatus =
+                apiError?.status || apiError?.statusCode || apiError?.meta?.statusCode;
+              if (errorStatus === 429 || errorStatus === '429') {
+                Logger.warn(
+                  { username },
+                  'Rate limit encountered, returning cached alerts'
+                );
+              } else {
+                throw apiError;
               }
-              alerts = filteredAlerts;
-            } else if (alertCount) {
-              // Limit to requested count if count was provided
-              alerts = alerts.slice(0, alertCount);
             }
           }
 
-          // Use the last backend poll timestamp, or current time if polling hasn't started yet
-          const pollingState = getPollingState();
-          const lastQueryTimestamp =
-            pollingState.lastPollTime || new Date().toISOString();
+          if (alertCount) {
+            // Limit to requested count if count was provided
+            alerts = alerts.slice(0, alertCount);
+          }
 
           cb(null, {
             alerts: alerts,
             count: alerts.length,
-            lastQueryTimestamp: lastQueryTimestamp
+            lastAlertTimestamp: lastAlertTimestamp
           });
         } catch (error) {
           const err = parseErrorToReadableJson(error);
@@ -317,7 +309,11 @@ const onMessage = async (payload, options, cb) => {
             { error, formattedError: err, username: username },
             'Failed to get alerts'
           );
-          cb({ detail: error?.detail || error?.message || 'Failed to get alerts', err });
+          cb({
+            detail: error?.detail || error?.message || 'Failed to get alerts',
+            ...(error?.status && { status: error.status }),
+            ...(err && typeof err === 'object' && !Array.isArray(err) && { err })
+          });
         }
         break;
 
@@ -327,9 +323,9 @@ const onMessage = async (payload, options, cb) => {
         if (!requestedAlertId) {
           return cb({ detail: 'Missing alertId in payload' });
         }
-        // Add route prefix to options
-        const optionsWithRouteForAlert = { ...options, routePrefix: routePrefix };
-        getAlertById(requestedAlertId, optionsWithRouteForAlert)
+
+        const optionsWithListIds = { ...options, listIds: listIds };
+        getAlertById(requestedAlertId, optionsWithListIds)
           .then((alert) => {
             if (alert) {
               Logger.debug(
@@ -348,7 +344,10 @@ const onMessage = async (payload, options, cb) => {
               { error, formattedError: err, alertId: requestedAlertId },
               'Failed to get alert by ID'
             );
-            cb({ detail: error?.detail || error?.message || 'Failed to get alert by ID', err });
+            cb({
+              detail: error?.detail || error?.message || 'Failed to get alert by ID',
+              err
+            });
           });
         break;
 
@@ -361,7 +360,7 @@ const onMessage = async (payload, options, cb) => {
 
         // Merge timezone from payload into options if provided
         const optionsWithTimezone = payloadTimezone
-          ? Object.assign({}, options, { timezone: payloadTimezone, trialAlert: true })
+          ? Object.assign({}, options, { timezone: payloadTimezone })
           : options;
 
         renderAlertDetail(alertToRender, optionsWithTimezone)
@@ -405,21 +404,9 @@ const onMessage = async (payload, options, cb) => {
         break;
 
       case 'getLists':
-        // Get lists from Dataminr API
-        // Add route prefix to options
-        const optionsWithRouteForLists = { ...options, routePrefix: routePrefix };
-        getLists(optionsWithRouteForLists)
-          .then((lists) => {
-            Logger.debug({ listCount: lists.length }, 'Retrieved lists from API');
-            cb(null, { lists });
-          })
-          .catch((error) => {
-            // This should never happen since getLists returns empty array on error
-            // But keeping for safety
-            const err = parseErrorToReadableJson(error);
-            Logger.error({ error, formattedError: err }, 'Unexpected error in getLists');
-            cb(null, { lists: [] });
-          });
+        // Get lists from cache
+        const cachedLists = getCachedLists();
+        cb(null, { lists: cachedLists || [] });
         break;
 
       default:

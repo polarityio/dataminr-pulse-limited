@@ -1,25 +1,20 @@
 const { getLogger } = require('polarity-integration-utils').logging;
 const { requestWithDefaults } = require('../request');
+const { ROUTE_PREFIX } = require('../constants');
+const { setCachedLists } = require('./stateManager');
 
 /**
  * Get lists from Dataminr API
  * @param {Object} options - Configuration options
- * @param {string} options.routePrefix - Route prefix for the API (e.g., 'firstalert' or 'pulse')
  * @returns {Promise<Array>} Resolves with array of lists with value and display properties
  */
-const getLists = async (options) => {
+const pollLists = async (options) => {
   const Logger = getLogger();
 
   try {
-    // Validate required options
-    if (!options || !options.routePrefix) {
-      Logger.warn({ options }, 'Missing routePrefix option, returning empty list');
-      return [];
-    }
-
     Logger.debug('Fetching lists from Dataminr API');
 
-    const route = `${options.routePrefix}/v1/lists`;
+    const route = `${ROUTE_PREFIX}/v1/lists`;
     const response = await requestWithDefaults({
       route,
       options,
@@ -47,13 +42,43 @@ const getLists = async (options) => {
 
     Logger.debug({ listCount: formattedLists.length }, 'Retrieved lists from API');
 
+    // Save to cache if lists are not null/empty
+    if (formattedLists && formattedLists.length > 0) {
+      setCachedLists(formattedLists);
+      Logger.debug('Lists saved to cache');
+    }
+
     return formattedLists;
   } catch (error) {
-    Logger.error({ error, routePrefix: options?.routePrefix }, 'Failed to fetch lists from Dataminr API, returning empty array');
+    Logger.error(
+      { error },
+      'Failed to fetch lists from Dataminr API, returning empty array'
+    );
     return [];
   }
 };
 
+/**
+ * Normalize list IDs from user options
+ * @param {Array<Object>} setListsToWatch - Array of list objects from user options
+ * @returns {Array<string>} Normalized array of list IDs
+ */
+const parseListConfig = (setListsToWatch) => {
+  let normalizedListIds = null;
+  if (setListsToWatch && Array.isArray(setListsToWatch) && setListsToWatch.length > 0) {
+    // Extract listIds from user options
+    normalizedListIds = setListsToWatch
+      .map((list) => list.value)
+      .filter((id) => id && id !== '0');
+    // If listIds is empty after filtering, set to null (no filtering)
+    if (normalizedListIds.length === 0) {
+      normalizedListIds = null;
+    }
+  }
+  return normalizedListIds;
+};
+
 module.exports = {
-  getLists
+  pollLists,
+  parseListConfig
 };

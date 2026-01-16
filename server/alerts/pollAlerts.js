@@ -6,7 +6,7 @@ const {
 const { getAlerts } = require('./getAlerts');
 const { getPollingState, updatePollingState } = require('./stateManager');
 const { processAlerts } = require('./alertProcessor');
-const { MAX_PAGE_SIZE } = require('../constants');
+const { DEFAULT_PAGE_SIZE } = require('../constants');
 
 /**
  * Sleep for a specified number of milliseconds
@@ -19,9 +19,10 @@ const sleep = (ms) => {
 
 /**
  * Poll the API for new alerts and process them
- * Uses timestamp-based filtering to get all alerts since last poll.
- * For first poll, fetches MAX_PAGE_SIZE (10) alerts. For subsequent polls, fetches all alerts
- * since lastPollTime by paginating through all pages.
+ * Uses cursor-based pagination to resume from the last position in the stream.
+ * For first poll, fetches DEFAULT_PAGE_SIZE (10) alerts and saves the cursor.
+ * For subsequent polls, resumes from the saved cursor and paginates foward until
+ * all new alerts are fetched (using timestamp filtering to determine when to stop).
  * @param {Object} options - Configuration options
  * @returns {Promise<Object>} Resolves with polling result object
  * @returns {boolean} returns.success - Whether polling was successful
@@ -37,37 +38,36 @@ const pollAlerts = async (options) => {
 
     const state = getPollingState();
     const isFirstPoll = !state.lastPollTime;
-    
+
     let totalAlertsProcessed = 0;
-    let paginationCursor = null;
+    // For subsequent polls, start with the saved cursor from last poll
+    // This allows us to resume from where we left off in the stream
+    let lastCursor = isFirstPoll ? null : state.lastCursor || null;
     let hasMore = false;
     let pageCount = 0;
-    const lastPollTimestamp = state.lastPollTime;
 
     // First poll: get 10 alerts to start
-    // Subsequent polls: get all alerts since lastPollTime by paginating through all pages
+    // Subsequent polls: get all alerts since last alert timestamp by paginating through all pages
     let totalAlertsFetched = 0; // Track total alerts fetched from API (before filtering)
-    
+
     if (isFirstPoll) {
       Logger.debug('First poll: fetching 10 alerts');
       pageCount = 1; // First poll is always 1 page
-      const { alerts, nextPage, rawAlertCount } = await getAlerts(options, null, 10, null);
-      totalAlertsFetched = rawAlertCount || 10; // First poll fetches up to 10 alerts
-      
+      const { alerts, nextPageCursor } = await getAlerts(options, { pageSize: 10 });
+      totalAlertsFetched = alerts.length; // First poll fetches up to 10 alerts
+
       if (alerts.length > 0) {
-        await processAlerts(alerts, options);
+        processAlerts(alerts, options);
         totalAlertsProcessed = alerts.length;
       }
-      
-      hasMore = !!nextPage;
+
+      // Save the cursor from nextPageCursor for the next poll
+      // This allows us to resume from where we left off
+      lastCursor = nextPageCursor ? nextPageCursor : lastCursor;
+      hasMore = false;
     } else {
-      // Subsequent polls: fetch all alerts since lastPollTime
-      // Since Dataminr returns alerts newest first, we paginate until we've gotten everything
-      // We stop when a page returns 0 alerts after timestamp filtering (all alerts are older)
-      Logger.debug(
-        { lastPollTime: lastPollTimestamp },
-        'Subsequent poll: fetching all alerts since last poll time'
-      );
+      // Subsequent polls: resume from saved cursor position in the stream
+      // We use the cursor from the last poll to continue forward in time
 
       let continuePaging = true;
       pageCount = 0; // Reset page count for subsequent polls
@@ -76,54 +76,30 @@ const pollAlerts = async (options) => {
 
       while (continuePaging && pageCount < maxPages) {
         pageCount++;
-        
-        // Fetch a page of alerts (getAlerts will filter by timestamp client-side)
-        const { alerts, nextPage, rawAlertCount } = await getAlerts(
-          options,
-          paginationCursor,
-          null, // No count limit - use timestamp filtering
-          lastPollTimestamp
-        );
 
-        // Track total alerts fetched from API (before filtering)
-        totalAlertsFetched += rawAlertCount || 0;
+        // Fetch a page of alerts (getAlerts will filter by timestamp client-side)
+        const { alerts, nextPageCursor } = await getAlerts(options, { from: lastCursor });
+
+        lastCursor = nextPageCursor ? nextPageCursor : lastCursor;
+        totalAlertsFetched += alerts.length;
 
         // Process alerts from this page
         if (alerts.length > 0) {
-          await processAlerts(alerts, options);
+          processAlerts(alerts, options);
           totalAlertsProcessed += alerts.length;
         }
 
-        // Extract cursor from nextPage URL for next iteration
-        // nextPage format: /v1/alerts?lists=12345&from=2wVWwq3bBSqy%2FtkFROaX2wUysoSh&pageSize=10
-        paginationCursor = null;
-        if (nextPage) {
-          try {
-            const urlParts = nextPage.split('?');
-            if (urlParts.length > 1) {
-              const urlParams = new URLSearchParams(urlParts[1]);
-              paginationCursor = urlParams.get('from');
-            }
-          } catch (error) {
-            Logger.warn({ error, nextPage }, 'Failed to parse nextPage URL for cursor');
-          }
+        if (alerts.length < DEFAULT_PAGE_SIZE) {
+          continuePaging = false;
         }
 
-        // Continue paging if:
-        // 1. There's a nextPage AND
-        // 2. We got a full page of alerts (10) after filtering
-        // Stop if we got fewer than 10 alerts - this means we've hit alerts older than lastPollTime
-        // Since alerts are sorted newest first, if a page has fewer than 10 matching alerts,
-        // all subsequent pages will also be older
-        continuePaging = !!nextPage && alerts.length === MAX_PAGE_SIZE;
-        
         Logger.debug(
           {
             page: pageCount,
             alertsThisPage: alerts.length,
             totalAlertsProcessed,
-            hasNextPage: !!nextPage,
-            continuePaging
+            continuePaging,
+            cursor: lastCursor
           },
           'Processed page of alerts'
         );
@@ -131,7 +107,7 @@ const pollAlerts = async (options) => {
         // Add a small delay between page requests to avoid rate limiting
         // Only delay if we're continuing to the next page
         if (continuePaging) {
-          await sleep(200); // 200ms delay between pages
+          await sleep(500); // 500ms delay between pages
         }
       }
 
@@ -145,9 +121,11 @@ const pollAlerts = async (options) => {
       hasMore = continuePaging;
     }
 
-    // Update polling state with current timestamp
+    // Update polling state with current timestamp and cursor
+    // Save the cursor so we can resume from this position in the next poll
     updatePollingState({
-      lastPollTime: new Date().toISOString(),
+      lastPollTime: Date.now(),
+      lastCursor: lastCursor,
       alertCount: totalAlertsProcessed,
       totalAlertsProcessed: state.totalAlertsProcessed + totalAlertsProcessed
     });
@@ -170,11 +148,33 @@ const pollAlerts = async (options) => {
       hasMore: hasMore
     };
   } catch (error) {
-    const err = parseErrorToReadableJson(error);
+    // Handle rate limiting (429) with a cleaner message
+    const statusCode = error.statusCode || (error.meta && error.meta.statusCode);
+    if (statusCode === 429) {
+      Logger.warn(
+        {
+          statusCode: 429,
+          message: 'Rate limit exceeded - too many requests to Dataminr API',
+          pageCount,
+          totalAlertsProcessed
+        },
+        'Rate limit exceeded during polling - will retry on next interval'
+      );
+      // Return success: false but don't log full stack trace
+      return {
+        success: false,
+        error: 'Rate limit exceeded - will retry on next poll interval'
+      };
+    }
+
+    // For other errors, log with minimal stack trace info
     Logger.error(
       {
-        formattedError: err,
-        error
+        statusCode: statusCode,
+        message: error.message || error.detail || 'Unknown error',
+        detail: error.detail,
+        pageCount,
+        totalAlertsProcessed
       },
       'Polling Dataminr API Failed'
     );
@@ -182,7 +182,7 @@ const pollAlerts = async (options) => {
     // Don't throw - allow polling to continue on next interval
     return {
       success: false,
-      error: error.message
+      error: error.message || error.detail || 'Polling failed'
     };
   }
 };

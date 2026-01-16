@@ -1,6 +1,6 @@
 const { size, map, some } = require('lodash/fp');
 const { getResultForThisEntity } = require('./dataTransformations');
-const { MAX_PAGE_SIZE } = require('./constants');
+const { DEFAULT_PAGE_SIZE } = require('./constants');
 const { processAlertData } = require('./templateRenderer');
 
 /**
@@ -64,7 +64,7 @@ const getResultsForThisEntity = async (entity, alerts, options) => {
 const createSummaryTags = ({ alerts }, options) =>
   [].concat(
     size(alerts)
-      ? `Alerts: ${size(alerts)}${size(alerts) === MAX_PAGE_SIZE ? '+' : ''}`
+      ? `Alerts: ${size(alerts)}${size(alerts) === DEFAULT_PAGE_SIZE ? '+' : ''}`
       : []
   );
 

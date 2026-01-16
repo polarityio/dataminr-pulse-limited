@@ -4,110 +4,148 @@ const {
 } = require('polarity-integration-utils');
 
 const { requestWithDefaults } = require('../request');
-const { MAX_PAGE_SIZE } = require('../constants');
+const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../constants');
 const { getCachedAlerts } = require('./stateManager');
+
+const parseNextPageCursor = (nextPage) => {
+  try {
+    if (!nextPage) return null;
+    const urlParts = nextPage.split('?');
+    if (urlParts.length > 1) {
+      const urlParams = new URLSearchParams(urlParts[1]);
+      return urlParams.get('from');
+    }
+  } catch (error) {
+    const Logger = getLogger();
+    Logger.warn({ error, nextPage }, 'Failed to parse nextPage URL for cursor');
+  }
+};
+
+const parsePreviousPageCursor = (previousPage) => {
+  try {
+    if (!previousPage) return null;
+    const urlParts = previousPage.split('?');
+    if (urlParts.length > 1) {
+      const urlParams = new URLSearchParams(urlParts[1]);
+      return urlParams.get('to');
+    }
+  } catch (error) {
+    const Logger = getLogger();
+    Logger.warn({ error, previousPage }, 'Failed to parse previousPage URL for cursor');
+    return null;
+  }
+};
 
 /**
  * Get alerts from the API with pagination support
  * @param {Object} options - Configuration options
  * @param {string} options.url - Base URL for the API
- * @param {string} options.routePrefix - Route prefix for the API (e.g., 'firstalert' or 'pulse')
- * @param {Array<string>} [options.listIds] - Optional array of list IDs to filter alerts
- * @param {string} [paginationCursor] - Optional pagination cursor for fetching next page
- * @param {number} [count] - Optional number of alerts to return (overrides timestamp on first query)
- * @param {string} [sinceTimestamp] - Optional ISO timestamp to filter alerts (returns alerts after this timestamp)
+ * @param {Object} parameters - Optional parameters for the query
+ * @param {Array<string>} [parameters.listIds] - Optional array of list IDs to filter alerts
+ * @param {string} [parameters.to] - Optional cursor value from previousPage URL's 'to' parameter for fetching alerts before this point
+ * @param {string} [parameters.from] - Optional cursor value from nextPage URL's 'from' parameter for fetching alerts after this point
+ * @param {number} [parameters.pageSize] - Optional number of alerts to return (overrides timestamp on first query)
  * @returns {Promise<Object>} Resolves with object containing alerts array and pagination info
  * @returns {Array<Object>} returns.alerts - Array of alert objects
- * @returns {string|null} returns.nextPage - Next page URL or null
- * @returns {string|null} returns.previousPage - Previous page URL or null
+ * @returns {string|null} returns.nextPageCursor - Next page URL or null
+ * @returns {string|null} returns.previousPageCursor - Previous page URL or null
  */
 const getAlerts = async (
   options,
-  paginationCursor = null,
-  count = null,
-  sinceTimestamp = null
+  { listIds = null, to = null, from = null, pageSize = null } = {}
 ) => {
   const Logger = getLogger();
 
   try {
-    // Use count as pageSize if it exists and is greater than MAX_PAGE_SIZE, otherwise use MAX_PAGE_SIZE
-    const pageSize = count && count > MAX_PAGE_SIZE ? count : MAX_PAGE_SIZE;
+    // Use pageSize if it exists and is greater than DEFAULT_PAGE_SIZE, otherwise use DEFAULT_PAGE_SIZE
+    const effectivePageSize =
+      typeof pageSize === 'number' && pageSize > DEFAULT_PAGE_SIZE
+        ? pageSize
+        : DEFAULT_PAGE_SIZE;
 
-    const queryParams = {
-      pageSize: pageSize
-    };
+    const queryParams = { pageSize: effectivePageSize };
 
-    // Add pagination cursor if provided (but not if count is specified for initial query)
-    if (paginationCursor && !count) {
-      queryParams.from = paginationCursor;
+    // Add pagination cursor if provided - prefer "from" over "to" if both are provided
+    // If pageSize is specified, only add the cursor if it is not the initial query
+    if (!pageSize) {
+      if (from) {
+        queryParams.from = from;
+      } else if (to) {
+        queryParams.to = to;
+      }
     }
 
     // Add list IDs if configured
-    if (options.listIds && options.listIds.length > 0) {
-      queryParams.lists = options.listIds.join(',');
+    if (listIds && listIds.length > 0) {
+      queryParams.lists = listIds.join(',');
     }
 
-    const fullUrl = `${options.url}/${options.routePrefix}/v1/alerts`;
+    const fullUrl = `${options.url}/${ROUTE_PREFIX}/v1/alerts`;
     Logger.debug(
       {
         url: fullUrl,
-        queryParams,
-        hasCursor: !!paginationCursor,
-        count: count,
-        sinceTimestamp: sinceTimestamp
+        queryParams
       },
       'Fetching alerts from the Dataminr API'
     );
 
     const response = await requestWithDefaults({
-      route: `${options.routePrefix}/v1/alerts`,
+      route: `${ROUTE_PREFIX}/v1/alerts`,
       options,
       qs: queryParams,
       method: 'GET'
     });
 
-    let alerts = (response.body && response.body.alerts) || [];
-
-    // Filter alerts by timestamp if sinceTimestamp is provided and count is not (count overrides timestamp)
-    if (sinceTimestamp && !count) {
-      const sinceDate = new Date(sinceTimestamp);
-      alerts = alerts.filter((alert) => {
-        if (!alert.alertTimestamp) {
-          return false;
-        }
-        const alertDate = new Date(alert.alertTimestamp);
-        return alertDate > sinceDate;
-      });
-    }
+    const alerts = (response.body && response.body.alerts) || [];
+    const nextPage = (response.body && response.body.nextPage) || null;
+    const previousPage = (response.body && response.body.previousPage) || null;
 
     Logger.debug(
       {
+        alertTimestamps: alerts.map((alert) => alert.alertTimestamp).slice(0, 3),
         statusCode: response.statusCode,
+        nextPage: nextPage,
+        previousPage: previousPage,
         alertCount: alerts.length,
-        originalAlertCount:
-          response.body && response.body.alerts ? response.body.alerts.length : 0,
-        hasNextPage: !!(response.body && response.body.nextPage),
-        hasPreviousPage: !!(response.body && response.body.previousPage),
-        filteredByTimestamp: !!(sinceTimestamp && !count),
         pageSize: pageSize
       },
       'Dataminr API response received'
     );
 
-    const rawAlertCount = response.body && response.body.alerts ? response.body.alerts.length : 0;
-
     return {
       alerts: alerts,
-      nextPage: (response.body && response.body.nextPage) || null,
-      previousPage: (response.body && response.body.previousPage) || null,
-      rawAlertCount: rawAlertCount // Count of alerts fetched from API before filtering
+      nextPage: nextPage,
+      previousPage: previousPage,
+      nextPageCursor: parseNextPageCursor(nextPage),
+      previousPageCursor: parsePreviousPageCursor(previousPage)
     };
   } catch (error) {
-    const err = parseErrorToReadableJson(error);
+    // Handle rate limiting (429) with a cleaner message
+    const statusCode = error.statusCode || (error.meta && error.meta.statusCode);
+    if (statusCode === 429) {
+      Logger.warn(
+        {
+          statusCode: 429,
+          message: 'Rate limit exceeded - too many requests to Dataminr API'
+        },
+        'Rate limit exceeded while fetching alerts'
+      );
+      // Return empty results instead of throwing for rate limits
+      return {
+        alerts: [],
+        nextPage: null,
+        previousPage: null,
+        nextPageCursor: null,
+        previousPageCursor: null
+      };
+    }
+
+    // For other errors, log with minimal stack trace info
     Logger.error(
       {
-        formattedError: err,
-        error
+        statusCode: statusCode,
+        message: error.message || error.detail || 'Unknown error',
+        detail: error.detail
       },
       'Getting Alerts Failed'
     );
@@ -120,18 +158,22 @@ const getAlerts = async (
  * @param {string} alertId - Alert ID to fetch
  * @param {Object} options - Configuration options
  * @param {string} options.url - Base URL for the API
- * @param {string} options.routePrefix - Route prefix for the API (e.g., 'firstalert' or 'pulse')
  * @param {Array<string>} [options.listIds] - Optional array of list IDs to include match reasons
  * @returns {Promise<Object>} Resolves with alert object
  */
 const getAlertById = async (alertId, options) => {
   const Logger = getLogger();
+  let listIds = null;
 
   if (!alertId) {
     throw new Error('Alert ID is required');
   }
 
-  const cachedAlerts = getCachedAlerts();
+  if (options && options.listIds) {
+    listIds = options.listIds;
+  }
+
+  const cachedAlerts = getCachedAlerts(listIds);
   const cachedAlert = cachedAlerts.find((alert) => alert.alertId === alertId);
 
   if (cachedAlert) {
@@ -143,11 +185,11 @@ const getAlertById = async (alertId, options) => {
     const queryParams = {};
 
     // Add list IDs if configured (to include match reasons)
-    if (options.listIds && options.listIds.length > 0) {
-      queryParams.lists = options.listIds.join(',');
+    if (listIds && listIds.length > 0) {
+      queryParams.lists = listIds.join(',');
     }
 
-    const route = `${options.routePrefix}/v1/alerts/${encodeURIComponent(alertId)}`;
+    const route = `${ROUTE_PREFIX}/v1/alerts/${encodeURIComponent(alertId)}`;
     const fullUrl = `${options.url}/${route}`;
     Logger.debug(
       {

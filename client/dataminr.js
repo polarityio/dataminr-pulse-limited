@@ -121,6 +121,7 @@ class PolarityUtils {
     this._scrollbarModeCallbacks = new Map(); // Map name -> callback
     this._scrollbarModeObserverInitialized = false;
     this._scrollbarModeLast = null; // Last scrollbar mode state
+    this._scrollbarModeElement = null; // Element used for scrollbar detection
     this._settingsChangeObserverInitialized = false;
     this._enterSettings = false;
   }
@@ -269,12 +270,38 @@ class PolarityUtils {
       return;
     }
 
-    const el = document.createElement('div');
-    el.style.cssText =
+    this._scrollbarModeElement = document.createElement('div');
+    this._scrollbarModeElement.style.cssText =
       'width:100px;height:100px;overflow:scroll;position:absolute;top:-9999px;';
-    document.body.appendChild(el);
+    document.body.appendChild(this._scrollbarModeElement);
 
     const check = () => {
+      const oldValue = this._scrollbarModeLast;
+      const newValue = this.getOverlayScrollbarState();
+      if (oldValue !== newValue) {
+        // Call all registered callbacks
+        this._scrollbarModeCallbacks.forEach((cb) => cb(newValue));
+      }
+    };
+
+    new ResizeObserver(check).observe(this._scrollbarModeElement);
+    ['resize', 'orientationchange', 'visibilitychange', 'pageshow'].forEach((ev) =>
+      window.addEventListener(ev, check, { passive: true })
+    );
+
+    this._scrollbarModeObserverInitialized = true;
+    check(); // initial detection
+  }
+
+  /**
+   * Check if overlay scrollbars are enabled
+   * @returns {boolean} True if overlay scrollbars are enabled, false otherwise
+   */
+  getOverlayScrollbarState() {
+    // If observer is initialized, use the stored element (which is already in the DOM)
+    if (this._scrollbarModeObserverInitialized && this._scrollbarModeElement) {
+      const el = this._scrollbarModeElement;
+
       // Force layout flush – this makes offsetWidth/clientWidth update correctly
       el.style.display = 'none';
       el.offsetHeight; // <-- force reflow (read a layout property)
@@ -283,18 +310,31 @@ class PolarityUtils {
       const overlay = el.offsetWidth === el.clientWidth;
       if (overlay !== this._scrollbarModeLast) {
         this._scrollbarModeLast = overlay;
-        // Call all registered callbacks
-        this._scrollbarModeCallbacks.forEach((cb) => cb(overlay));
       }
-    };
 
-    new ResizeObserver(check).observe(el);
-    ['resize', 'orientationchange', 'visibilitychange', 'pageshow'].forEach((ev) =>
-      window.addEventListener(ev, check, { passive: true })
-    );
+      return overlay;
+    }
 
-    this._scrollbarModeObserverInitialized = true;
-    check(); // initial detection
+    // If observer hasn't been initialized, perform a one-time check with temporary element
+    const tempEl = document.createElement('div');
+    tempEl.style.cssText =
+      'width:100px;height:100px;overflow:scroll;position:absolute;top:-9999px;';
+    document.body.appendChild(tempEl);
+
+    // Force layout flush – this makes offsetWidth/clientWidth update correctly
+    tempEl.style.display = 'none';
+    tempEl.offsetHeight; // <-- force reflow (read a layout property)
+    tempEl.style.display = '';
+
+    const overlay = tempEl.offsetWidth === tempEl.clientWidth;
+    document.body.removeChild(tempEl);
+
+    // Cache the result if not already cached
+    if (this._scrollbarModeLast === null) {
+      this._scrollbarModeLast = overlay;
+    }
+
+    return overlay;
   }
 
   /**
@@ -398,10 +438,9 @@ class DataminrIntegration {
     this.currentAlertCache = new Map(); // Map of alertId -> full alert object (# macCacheSize)
     this.currentAlertIds = new Map(); // Map of alertId -> { id, headline, type, alertTimestamp }
     this.maxCacheSize = 100;
-    this.lastQueryTimestamp = null; // ISO timestamp of last query
+    this.lastAlertTimestamp = null; // ISO timestamp of last alert
     this.maxVisibleTags = 10; // Maximum number of visible alert tags to display
     this.currentFilter = null; // Current alert type filter: null (all), 'Flash', 'Urgent', or 'Alert'
-    this.defaultAlertTypesToWatch = ['flash', 'urgent'];
 
     // Initialize the application
     this.init();
@@ -439,6 +478,11 @@ class DataminrIntegration {
       document.body.classList.contains('dm-jewel-theme');
     if (hasJewelTheme) {
       className += ' dm-jewel-theme';
+    }
+
+    const overlay = window.PolarityUtils.getOverlayScrollbarState();
+    if (overlay) {
+      className += ' overlay-scrollbars';
     }
 
     return className;
@@ -738,52 +782,31 @@ class DataminrIntegration {
         action: 'getAlerts'
       };
 
-      // Add listIds if setListsToWatch is configured and not empty
-      if (
-        this.userOptions &&
-        this.userOptions.setListsToWatch &&
-        Array.isArray(this.userOptions.setListsToWatch) &&
-        this.userOptions.setListsToWatch.length > 0
-      ) {
-        const listIds = this.userOptions.setListsToWatch
-          .map((list) => list.value)
-          .filter((id) => id && id !== '0');
-        if (listIds.length > 0) {
-          payload.listIds = listIds.join(',');
-        }
-      }
-
       // If count is provided (from URL parameter), include it (overrides timestamp)
       if (count) {
         payload.count = count;
-      } else if (this.lastQueryTimestamp) {
+      } else if (this.lastAlertTimestamp) {
         // Otherwise, send the last query timestamp to get alerts since then
-        payload.sinceTimestamp = this.lastQueryTimestamp;
+        payload.sinceTimestamp = this.lastAlertTimestamp;
       } else {
         // First query: send current timestamp (will return empty array)
         payload.sinceTimestamp = new Date().toISOString();
       }
 
       const result = await this.sendIntegrationMessage(payload);
-      let listsMatched = new Map();
-      for (const alert of result.alerts) {
-        for (const list of alert.listsMatched) {
-          listsMatched.set(list.id, list.name);
-        }
-      }
 
       // Update last query timestamp from response
-      if (result && result.lastQueryTimestamp) {
-        this.lastQueryTimestamp = result.lastQueryTimestamp;
+      if (result && result.lastAlertTimestamp) {
+        this.lastAlertTimestamp = result.lastAlertTimestamp;
       } else if (result && result.alerts && result.alerts.length > 0) {
         // If no timestamp in response, use the most recent alert's timestamp
         const mostRecentAlert = result.alerts[0];
         if (mostRecentAlert && mostRecentAlert.alertTimestamp) {
-          this.lastQueryTimestamp = mostRecentAlert.alertTimestamp;
+          this.lastAlertTimestamp = mostRecentAlert.alertTimestamp;
         }
-      } else if (!this.lastQueryTimestamp) {
+      } else if (!this.lastAlertTimestamp) {
         // First query with no alerts: set timestamp to now
-        this.lastQueryTimestamp = new Date().toISOString();
+        this.lastAlertTimestamp = new Date().toISOString();
       }
 
       if (result && result.alerts) {
@@ -810,7 +833,7 @@ class DataminrIntegration {
     }
 
     // Reset the last query timestamp
-    this.lastQueryTimestamp = null;
+    this.lastAlertTimestamp = null;
 
     // Update alert count to 0
     this.updateAlertCount(0);
@@ -857,7 +880,7 @@ class DataminrIntegration {
    * @private
    */
   hideAllDetails() {
-    const allDetails = qsa('.dataminr-alert-detail');
+    const allDetails = qsa('#dataminr-details-container .dataminr-alert-detail');
     allDetails.forEach((detail) => {
       detail.style.display = 'none';
       detail.classList.remove('visible');
@@ -912,7 +935,7 @@ class DataminrIntegration {
         );
         if (!detailsContainer) {
           detailsContainer = document.createElement('div');
-          detailsContainer.className = dataminrDetailsClass;
+          detailsContainer.className = this.buildClassName('dataminr-alert-details');
           dataminrDetailsContainer.appendChild(detailsContainer);
         }
 
@@ -1242,37 +1265,6 @@ class DataminrIntegration {
    * @returns {number} returns.alert - Count of Alert alerts
    * @returns {number} returns.total - Total count of all alerts
    */
-  /**
-   * Check if an alert type should be included based on alertTypesToWatch configuration
-   * @private
-   * @param {string} alertType - Alert type to check ('Flash', 'Urgent', 'Alert')
-   * @returns {boolean} True if alert type should be included
-   */
-  shouldIncludeAlertType(alertType) {
-    // Get configured alert types to watch (default to all if not configured)
-    const alertTypesToWatch =
-      this.userOptions &&
-      this.userOptions.setAlertTypesToWatch &&
-      this.userOptions.setAlertTypesToWatch.length > 0
-        ? this.userOptions.setAlertTypesToWatch
-        : this.defaultAlertTypesToWatch;
-
-    // Normalize to lowercase for comparison
-    const normalizedTypes = alertTypesToWatch.map((type) => {
-      // If it's an object with a value property, use that
-      if (type && typeof type === 'object' && type.value) {
-        return typeof type.value === 'string'
-          ? type.value.toLowerCase()
-          : String(type.value).toLowerCase();
-      }
-      // Otherwise treat as string
-      return typeof type === 'string' ? type.toLowerCase() : String(type).toLowerCase();
-    });
-
-    const normalizedAlertType = alertType ? alertType.toLowerCase() : 'alert';
-    return normalizedTypes.indexOf(normalizedAlertType) !== -1;
-  }
-
   calculateAlertCountsByType() {
     if (!this.currentAlertIds || this.currentAlertIds.size === 0) {
       return { flash: 0, urgent: 0, alert: 0, total: 0 };
@@ -1282,13 +1274,7 @@ class DataminrIntegration {
 
     this.currentAlertIds.forEach((alert) => {
       const alertType = this.getAlertType(alert);
-
-      // Only count alerts that match alertTypesToWatch configuration
-      if (!this.shouldIncludeAlertType(alertType)) {
-        return;
-      }
-
-      const normalizedType = alertType.toLowerCase();
+      const normalizedType = alertType ? alertType.toLowerCase() : 'alert';
 
       if (normalizedType === 'flash') {
         counts.flash++;
@@ -1305,71 +1291,29 @@ class DataminrIntegration {
   }
 
   /**
-   * Determine which alert type icon should be shown based on filter options
-   * Fallback logic: Alert -> Urgent -> Flash
-   * @private
-   * @returns {string|null} The alert type to show ('Alert', 'Urgent', 'Flash') or null if none selected
-   */
-  getAlertTypeToShow() {
-    // Get configured alert types to watch (default to all if not configured)
-    const alertTypesToWatch =
-      this.userOptions &&
-      this.userOptions.setAlertTypesToWatch &&
-      this.userOptions.setAlertTypesToWatch.length > 0
-        ? this.userOptions.setAlertTypesToWatch
-        : this.defaultAlertTypesToWatch;
-
-    // Normalize to lowercase for comparison
-    // Handle both string arrays and object arrays with {value, display} structure
-    const normalizedTypes = alertTypesToWatch.map(function (type) {
-      // If it's an object with a value property, use that
-      if (type && typeof type === 'object' && type.value) {
-        return typeof type.value === 'string'
-          ? type.value.toLowerCase()
-          : String(type.value).toLowerCase();
-      }
-      // Otherwise treat as string
-      return typeof type === 'string' ? type.toLowerCase() : String(type).toLowerCase();
-    });
-
-    // Fallback logic: Alert -> Urgent -> Flash
-    if (normalizedTypes.indexOf('alert') !== -1) {
-      return 'Alert';
-    } else if (normalizedTypes.indexOf('urgent') !== -1) {
-      return 'Urgent';
-    } else if (normalizedTypes.indexOf('flash') !== -1) {
-      return 'Flash';
-    }
-
-    // Default to Alert if no filter configured or empty array
-    return 'Alert';
-  }
-
-  /**
    * Update alert counts in UI (by type: Flash, Urgent, Alert)
-   * Only shows the icon for the alert type determined by getAlertTypeToShow()
+   * Shows icons for alert types that have counts > 0
    * @private
    * @param {number} [count] - Optional total count (if not provided, calculates from currentAlertIds)
    */
   updateAlertCount(count) {
     // Calculate counts by type
     const counts = this.calculateAlertCountsByType();
+    const noneIcon = byId('dataminr-alert-icon-none');
     const totalCount = count !== undefined ? count : counts.total;
+    if (noneIcon) {
+      noneIcon.style.display = totalCount > 0 ? 'none' : 'inline-block';
+    }
 
     const integrationContainer = this.getIntegrationContainer();
     if (!integrationContainer) return;
-
-    // Determine which alert type icon should be shown based on filter options
-    const alertTypeToShow = this.getAlertTypeToShow();
 
     // Update Flash count
     const flashIcon = qs('.dataminr-alert-icon-flash', integrationContainer);
     if (flashIcon) {
       flashIcon.textContent = counts.flash.toString();
-      // Only show if it's the selected type to show (fallback logic)
-      const shouldShow =
-        alertTypeToShow === 'Flash' ||
-        (counts.flash > 0 && this.shouldIncludeAlertType('Flash'));
+      // Only show if it's the selected type to show or if there are alerts of this type
+      const shouldShow = totalCount > 0 && counts.flash > 0;
       flashIcon.style.display = shouldShow ? 'inline-block' : 'none';
       // Make it clickable and update opacity based on filter
       flashIcon.style.cursor = 'pointer';
@@ -1381,10 +1325,8 @@ class DataminrIntegration {
     const urgentIcon = qs('.dataminr-alert-icon-urgent', integrationContainer);
     if (urgentIcon) {
       urgentIcon.textContent = counts.urgent.toString();
-      // Only show if it's the selected type to show (fallback logic)
-      const shouldShow =
-        alertTypeToShow === 'Urgent' ||
-        (counts.urgent > 0 && this.shouldIncludeAlertType('Urgent'));
+      // Only show if it's the selected type to show or if there are alerts of this type
+      const shouldShow = totalCount > 0 && counts.urgent > 0;
       urgentIcon.style.display = shouldShow ? 'inline-block' : 'none';
       // Make it clickable and update opacity based on filter
       urgentIcon.style.cursor = 'pointer';
@@ -1396,10 +1338,8 @@ class DataminrIntegration {
     const alertIcon = qs('.dataminr-alert-icon-alert', integrationContainer);
     if (alertIcon) {
       alertIcon.textContent = counts.alert.toString();
-      // Only show if it's the selected type to show (fallback logic)
-      const shouldShow =
-        alertTypeToShow === 'Alert' ||
-        (counts.alert > 0 && this.shouldIncludeAlertType('Alert'));
+      // Only show if it's the selected type to show or if there are alerts of this type
+      const shouldShow = totalCount > 0 && counts.alert > 0;
       alertIcon.style.display = shouldShow ? 'inline-block' : 'none';
       // Make it clickable and update opacity based on filter
       alertIcon.style.cursor = 'pointer';
@@ -1557,12 +1497,6 @@ class DataminrIntegration {
 
     // Convert Map to array for iteration
     let alertsArray = Array.from(alertsMap.values());
-
-    // Filter by alertTypesToWatch configuration first
-    alertsArray = alertsArray.filter((alert) => {
-      const alertType = this.getAlertType(alert);
-      return this.shouldIncludeAlertType(alertType);
-    });
 
     // Apply user filter if one is active (Flash/Urgent/Alert icon click)
     if (this.currentFilter) {
@@ -1813,7 +1747,7 @@ class DataminrIntegration {
    * @private
    */
   async lookupAlertFromUrl() {
-    const alertId = this.getUrlParameter('alert');
+    const alertId = this.getUrlParameter('alert') || this.getUrlParameter('alertId');
     if (!alertId) {
       return;
     }
@@ -1902,7 +1836,7 @@ class DataminrIntegration {
    * Update the configuration options for the Dataminr available lists
    * @private
    */
-  async updateListsToWatch() {
+  async updateListConfigSelect() {
     try {
       // Fetch lists from backend
       const response = await this.sendIntegrationMessage({
@@ -1944,7 +1878,7 @@ class DataminrIntegration {
     }, 1000);
 
     // Update lists to watch asynchronously
-    this.updateListsToWatch().catch((error) => {
+    this.updateListConfigSelect().catch((error) => {
       console.error('Error updating lists to watch:', error);
     });
 
@@ -2144,6 +2078,9 @@ class DataminrIntegration {
       return;
     }
 
+    // Determine if Alert is a Pinned Pulse.
+    const isPinnedAlert = alertDetail.hasAttribute('data-alert-id');
+
     // Find the details container
     let detailsContainer = alertDetail.querySelector(
       '.dataminr-entity-details-container'
@@ -2171,7 +2108,10 @@ class DataminrIntegration {
     const alertDetailContent = alertDetail.querySelector(
       '.dataminr-alert-detail-content'
     );
-    if (alertDetailContent) {
+
+    // Only hide the alertDetailContent for pinned alerts as non-pinned alerts
+    // are hidden when we hide all entity notifications.
+    if (isPinnedAlert && alertDetailContent) {
       alertDetailContent.style.display = 'none';
     }
 
@@ -2198,7 +2138,6 @@ class DataminrIntegration {
     const linkSection = detailsContainer.querySelector(
       '#dataminr-entity-details-link-section'
     );
-    const closeButton = detailsContainer.querySelector('.dataminr-entity-details-close');
 
     aboutLabel.style.display = 'none';
     // Populate with entity data
@@ -2274,7 +2213,46 @@ class DataminrIntegration {
       }
     }
 
-    // Set up close button handler if not already set
+    let closeButton;
+    let detailsContainerClone;
+    // The alert is not pinned which means it is in the wrong location to be viewable
+    // We need to "portal" the element to the correct location
+    if (!isPinnedAlert) {
+      this.deactivateAllTagButtons();
+      this.hideAllDetails();
+
+      // Get or create the details container
+      const dataminrDetailsContainer = this.getDataminrDetailsContainerForIntegration();
+
+      let entityDetailsParent = dataminrDetailsContainer.querySelector(
+        '.dataminr-entity-details'
+      );
+
+      if (!entityDetailsParent) {
+        entityDetailsParent = Object.assign(document.createElement('div'), {
+          className: this.buildClassName('dataminr-entity-details')
+        });
+      }
+      const entityDetailsTargetContainer = Object.assign(document.createElement('div'), {
+        className: 'dataminr-entity-detail',
+        style: 'display: block; margin-top: 0;'
+      });
+      entityDetailsParent.appendChild(entityDetailsTargetContainer);
+      dataminrDetailsContainer.appendChild(entityDetailsParent);
+
+      if (detailsContainer && entityDetailsTargetContainer) {
+        entityDetailsTargetContainer.innerHTML = '';
+        detailsContainerClone = detailsContainer.cloneNode(true);
+        entityDetailsTargetContainer.appendChild(detailsContainerClone);
+        closeButton = detailsContainerClone.querySelector(
+          '.dataminr-entity-details-close'
+        );
+      }
+    } else {
+      closeButton = detailsContainer.querySelector('.dataminr-entity-details-close');
+    }
+
+    // Set up close button handler (after potential cloning) if not already set
     if (closeButton && !closeButton.hasAttribute('data-handler-attached')) {
       closeButton.setAttribute('data-handler-attached', 'true');
       closeButton.addEventListener('click', () => {
@@ -2282,21 +2260,16 @@ class DataminrIntegration {
       });
     }
 
-    // Show the details container
-    detailsContainer.style.display = 'block';
+    // Make the details container visible after any potential portaling of
+    // non-pinned alerts
+    if (isPinnedAlert) {
+      detailsContainer.style.display = 'block';
+    } else if (detailsContainerClone) {
+      detailsContainerClone.style.display = 'block';
+    }
 
     // Scroll to the top when opening entity details
-    // Use setTimeout to ensure the display change has taken effect
-    setTimeout(() => {
-      // Scroll the scrollable container so entity details container is at the top
-      const scrollContainer = this.getScrollableContainer(alertDetail);
-      const alertDetailRect = alertDetail.getBoundingClientRect();
-      const paddingTop = 10; // .dataminr-alert-detail has padding: 10px
-      const containerRect = scrollContainer.getBoundingClientRect();
-      const relativeTop =
-        alertDetailRect.top - containerRect.top + scrollContainer.scrollTop - paddingTop;
-      scrollContainer.scrollTop = Math.max(0, relativeTop);
-    }, 0);
+    this.scrollToTop(alertDetail);
   }
 
   /**
@@ -2309,22 +2282,40 @@ class DataminrIntegration {
       return;
     }
 
-    const detailsContainer = alertDetail.querySelector(
-      '.dataminr-entity-details-container'
-    );
-    if (detailsContainer) {
-      detailsContainer.style.display = 'none';
-    }
+    const isPinnedAlert = alertDetail.hasAttribute('data-alert-id');
 
-    // Restore entity notification classes in notification overlay scroll container
-    this.restoreEntityNotifications(alertDetail);
+    if (isPinnedAlert) {
+      const detailsContainer = alertDetail.querySelector(
+        '.dataminr-entity-details-container'
+      );
+      if (detailsContainer) {
+        detailsContainer.style.display = 'none';
+      }
 
-    // Show the alert detail content
-    const alertDetailContent = alertDetail.querySelector(
-      '.dataminr-alert-detail-content'
-    );
-    if (alertDetailContent) {
-      alertDetailContent.style.display = 'block';
+      // Restore entity notification classes in notification overlay scroll container
+      this.restoreEntityNotifications(alertDetail);
+
+      // Show the alert detail content
+      const alertDetailContent = alertDetail.querySelector(
+        '.dataminr-alert-detail-content'
+      );
+      if (alertDetailContent) {
+        alertDetailContent.style.display = 'block';
+      }
+    } else {
+      // Get or create the details container
+      const dataminrDetailsContainer = this.getDataminrDetailsContainerForIntegration();
+
+      let entityDetailsTargetContainer = dataminrDetailsContainer.querySelector(
+        '.dataminr-entity-details'
+      );
+
+      if (entityDetailsTargetContainer) {
+        entityDetailsTargetContainer.innerHTML = '';
+      }
+
+      // Restore entity notification classes in notification overlay scroll container
+      this.restoreEntityNotifications(alertDetail);
     }
 
     // Restore scroll position
@@ -2348,6 +2339,221 @@ class DataminrIntegration {
         // Clean up the saved scroll position attributes
         alertDetail.removeAttribute('data-saved-scroll-position');
         alertDetail.removeAttribute('data-scroll-container-id');
+      });
+    }
+  }
+
+  /**
+   * Show metadata details (Key Points) in overlay view
+   * @private
+   * @param {Element} triggerElement - The element that triggered the display
+   */
+  showMetadataDetails(triggerElement) {
+    if (!triggerElement) {
+      console.error('No trigger element provided to showMetadataDetails');
+      return;
+    }
+
+    // Find the alert detail container
+    const alertDetail = triggerElement.closest('.dataminr-alert-detail');
+    if (!alertDetail) {
+      console.error('Could not find alert detail container');
+      return;
+    }
+
+    // Find the metadata details overlay
+    const detailsOverlay = alertDetail.querySelector(
+      '.dataminr-metadata-details-overlay'
+    );
+    if (!detailsOverlay) {
+      console.error('Could not find metadata details overlay');
+      return;
+    }
+
+    // Determine if Alert is a Pinned Pulse.
+    const isPinnedAlert = alertDetail.hasAttribute('data-alert-id');
+
+    // Save scroll position before showing metadata details
+    const scrollContainer = this.getScrollableContainer(alertDetail);
+    const savedScrollPosition = this.getScrollPosition(scrollContainer);
+    alertDetail.setAttribute(
+      'data-saved-metadata-scroll-position',
+      savedScrollPosition.toString()
+    );
+    if (scrollContainer !== window) {
+      alertDetail.setAttribute(
+        'data-metadata-scroll-container-id',
+        scrollContainer.id || ''
+      );
+    }
+
+    // Hide entity notification classes in notification overlay scroll container
+    this.hideEntityNotifications(alertDetail);
+
+    // Find and hide the alert detail content
+    const alertDetailContent = alertDetail.querySelector(
+      '.dataminr-alert-detail-content'
+    );
+
+    // Only hide the alertDetailContent for pinned alerts as non-pinned alerts
+    // are hidden when we hide all entity notifications.
+    if (isPinnedAlert && alertDetailContent) {
+      alertDetailContent.style.display = 'none';
+    }
+
+    let closeButton;
+    let detailsOverlayClone;
+    // The alert is not pinned which means it is in the wrong location to be viewable
+    // We need to "portal" the element to the correct location
+    if (!isPinnedAlert) {
+      this.deactivateAllTagButtons();
+      this.hideAllDetails();
+
+      // Get or create the details container
+      const dataminrDetailsContainer = this.getDataminrDetailsContainerForIntegration();
+
+      let metadataDetailsParent = dataminrDetailsContainer.querySelector(
+        '.dataminr-entity-details'
+      );
+
+      if (!metadataDetailsParent) {
+        metadataDetailsParent = Object.assign(document.createElement('div'), {
+          className: this.buildClassName('dataminr-entity-details')
+        });
+      }
+      const metadataDetailsTargetContainer = Object.assign(
+        document.createElement('div'),
+        {
+          className: 'dataminr-entity-detail',
+          style: 'display: block; margin-top: 0;'
+        }
+      );
+      metadataDetailsParent.appendChild(metadataDetailsTargetContainer);
+      dataminrDetailsContainer.appendChild(metadataDetailsParent);
+
+      if (detailsOverlay && metadataDetailsTargetContainer) {
+        metadataDetailsTargetContainer.innerHTML = '';
+        detailsOverlayClone = detailsOverlay.cloneNode(true);
+        metadataDetailsTargetContainer.appendChild(detailsOverlayClone);
+        closeButton = detailsOverlayClone.querySelector(
+          '.dataminr-metadata-details-overlay-close'
+        );
+      }
+    } else {
+      closeButton = detailsOverlay.querySelector(
+        '.dataminr-metadata-details-overlay-close'
+      );
+    }
+
+    // Set up close button handler (after potential cloning) if not already set
+    if (closeButton && !closeButton.hasAttribute('data-handler-attached')) {
+      closeButton.setAttribute('data-handler-attached', 'true');
+      closeButton.addEventListener('click', () => {
+        this.hideMetadataDetails(alertDetail);
+      });
+    }
+
+    // Make the details overlay visible after any potential portaling of
+    // non-pinned alerts
+    if (isPinnedAlert) {
+      detailsOverlay.style.display = 'block';
+    } else if (detailsOverlayClone) {
+      detailsOverlayClone.style.display = 'block';
+    }
+
+    // Scroll to the top when opening metadata details
+    this.scrollToTop(alertDetail);
+  }
+
+  /**
+   * Scroll to the top when opening entity ormetadata details
+   * @private
+   * @param {Element} alertDetail - The alert detail element
+   */
+  scrollToTop(alertDetail) {
+    setTimeout(() => {
+      // Scroll the scrollable container so entity details container is at the top
+      const scrollContainer = this.getScrollableContainer(alertDetail);
+      const alertDetailRect = alertDetail.getBoundingClientRect();
+      const paddingTop = 10; // .dataminr-alert-detail has padding: 10px
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const relativeTop =
+        alertDetailRect.top - containerRect.top + scrollContainer.scrollTop - paddingTop;
+      scrollContainer.scrollTop = Math.max(0, relativeTop);
+    }, 0);
+  }
+
+  /**
+   * Hide metadata details overlay
+   * @private
+   * @param {Element} alertDetail - The alert detail element
+   */
+  hideMetadataDetails(alertDetail) {
+    if (!alertDetail) {
+      return;
+    }
+
+    const isPinnedAlert = alertDetail.hasAttribute('data-alert-id');
+
+    if (isPinnedAlert) {
+      const detailsOverlay = alertDetail.querySelector(
+        '.dataminr-metadata-details-overlay'
+      );
+      if (detailsOverlay) {
+        detailsOverlay.style.display = 'none';
+      }
+
+      // Restore entity notification classes in notification overlay scroll container
+      this.restoreEntityNotifications(alertDetail);
+
+      // Show the alert detail content
+      const alertDetailContent = alertDetail.querySelector(
+        '.dataminr-alert-detail-content'
+      );
+      if (alertDetailContent) {
+        alertDetailContent.style.display = 'block';
+      }
+    } else {
+      // Get or create the details container
+      const dataminrDetailsContainer = this.getDataminrDetailsContainerForIntegration();
+
+      let metadataDetailsTargetContainer = dataminrDetailsContainer.querySelector(
+        '.dataminr-entity-details'
+      );
+
+      if (metadataDetailsTargetContainer) {
+        metadataDetailsTargetContainer.innerHTML = '';
+      }
+
+      // Restore entity notification classes in notification overlay scroll container
+      this.restoreEntityNotifications(alertDetail);
+    }
+
+    // Restore scroll position
+    const savedScrollPosition = alertDetail.getAttribute(
+      'data-saved-metadata-scroll-position'
+    );
+    if (savedScrollPosition !== null) {
+      const scrollPosition = parseFloat(savedScrollPosition);
+      const scrollContainerId = alertDetail.getAttribute(
+        'data-metadata-scroll-container-id'
+      );
+
+      let scrollContainer;
+      if (scrollContainerId) {
+        scrollContainer = byId(scrollContainerId);
+      }
+
+      if (!scrollContainer) {
+        scrollContainer = this.getScrollableContainer(alertDetail);
+      }
+
+      // Use requestAnimationFrame to ensure DOM has updated before scrolling
+      requestAnimationFrame(() => {
+        this.setScrollPosition(scrollContainer, scrollPosition);
+        // Clean up the saved scroll position attributes
+        alertDetail.removeAttribute('data-saved-metadata-scroll-position');
+        alertDetail.removeAttribute('data-metadata-scroll-container-id');
       });
     }
   }
@@ -2498,17 +2704,35 @@ class DataminrIntegration {
         }
       });
 
-      // Video-specific: stalled event
-      if (mediaElement.tagName === 'VIDEO') {
-        mediaElement.addEventListener('stalled', () => {
-          // Media stalled, might be blocked
-          if (!hasLoadedData) {
-            self.showMediaFallback(mediaElement);
-          }
-        });
-      }
+      // Handle stalled event (works for both video and audio)
+      mediaElement.addEventListener('stalled', () => {
+        // Media stalled, might be blocked by CORS
+        if (!hasLoadedData) {
+          self.showMediaFallback(mediaElement);
+        }
+      });
 
-      // Check immediately if media is already in error state (video only)
+      // Handle abort event which can fire on CORS errors
+      mediaElement.addEventListener('abort', () => {
+        if (!hasLoadedData) {
+          self.showMediaFallback(mediaElement);
+        }
+      });
+
+      // Handle suspend event - can indicate CORS blocking
+      mediaElement.addEventListener('suspend', () => {
+        // Only show fallback if we haven't loaded any data and media is in early loading state
+        if (!hasLoadedData && mediaElement.readyState < 2) {
+          // Set a short timeout to allow normal suspend events during buffering
+          setTimeout(() => {
+            if (!hasLoadedData && mediaElement.readyState < 2) {
+              self.showMediaFallback(mediaElement);
+            }
+          }, 1500);
+        }
+      });
+
+      // Check immediately if media is already in error state
       if (mediaElement.error && mediaElement.error.code !== 0) {
         self.showMediaFallback(mediaElement);
       }
@@ -2622,6 +2846,31 @@ class DataminrIntegration {
         // Submit each value individually
         if (metadataValues.length > 0) {
           this.submitMetadataSearchesSequentially(metadataValues);
+        }
+        return;
+      }
+
+      // Handle metadata details trigger (View additional details for Key Points)
+      if (e.target.closest('.dataminr-vulnerability-view-details-trigger')) {
+        const triggerElement = e.target.closest(
+          '.dataminr-vulnerability-view-details-trigger'
+        );
+        e.stopPropagation();
+        e.preventDefault();
+
+        this.showMetadataDetails(triggerElement);
+        return;
+      }
+
+      // Handle metadata details close button
+      if (e.target.closest('.dataminr-metadata-details-overlay-close')) {
+        e.stopPropagation();
+        e.preventDefault();
+
+        const closeButton = e.target.closest('.dataminr-metadata-details-overlay-close');
+        const alertDetail = closeButton.closest('.dataminr-alert-detail');
+        if (alertDetail) {
+          this.hideMetadataDetails(alertDetail);
         }
         return;
       }

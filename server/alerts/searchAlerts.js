@@ -6,27 +6,27 @@ const {
 } = require('polarity-integration-utils');
 
 const { requestsInParallel } = require('../request');
-const { MAX_PAGE_SIZE } = require('../constants');
+const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../constants');
 
 /**
- * Search for alerts matching the given entities
+ * Search for alerts matching the given entities against all Lists
  * @param {Array<Object>} entities - Array of entity objects to search for
  * @param {Object} options - Configuration options
- * @param {string} options.routePrefix - Route prefix for the API (e.g., 'firstalert' or 'pulse')
  * @returns {Promise<Array<Object>>} Resolves with array of alert results
+ * @returns {Array<Object>} returns.alerts - Array of alert objects
  */
 const searchAlerts = async (entities, options) => {
   const Logger = getLogger();
 
   try {
-    const route = `${options.routePrefix}/v1/alerts`;
+    const route = `${ROUTE_PREFIX}/v1/alerts`;
     const alertsRequests = map(
       (entity) => ({
         resultId: entity.value,
         route,
         qs: {
           query: entity.value,
-          pageSize: MAX_PAGE_SIZE
+          pageSize: DEFAULT_PAGE_SIZE
         },
         options
       }),

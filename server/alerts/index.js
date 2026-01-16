@@ -1,6 +1,6 @@
 const searchAlerts = require('./searchAlerts');
 const { getAlerts, getAlertById } = require('./getAlerts');
-const { getLists } = require('./getLists');
+const { pollLists, parseListConfig } = require('./pollLists');
 const pollAlerts = require('./pollAlerts');
 
 const {
@@ -13,10 +13,11 @@ const {
 module.exports = {
   searchAlerts,
   getAlerts,
-  getLists,
   getAlertById,
+  pollLists,
   pollAlerts,
   resetPollingState,
+  parseListConfig,
   getCachedAlerts,
   addAlertsToCache,
   clearCachedAlerts

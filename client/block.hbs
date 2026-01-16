@@ -389,7 +389,7 @@
                       {{/if}}
                       {{#if (eq mediaItem.type "audio")}}
                         <div class="dataminr-media-container dataminr-audio-container">
-                          <audio class="dataminr-audio-player" aria-label="Audio player" controls controlslist="nodownload" style="width: 100%;" src="{{mediaItem.href}}" data-media-url="{{mediaItem.href}}" crossorigin="anonymous"></audio>
+                          <audio class="dataminr-media-player dataminr-audio-player" aria-label="Audio player" controls controlslist="nodownload" style="width: 100%;" src="{{mediaItem.href}}" data-media-url="{{mediaItem.href}}" crossorigin="anonymous"></audio>
                           <div class="dataminr-media-fallback" style="display: none;">
                             <div class="dataminr-media-fallback-message">
                               <p>Audio cannot be embedded due to access restrictions.</p>
@@ -474,6 +474,84 @@
                   <span
                     class="dataminr-alert-metadata-value"
                   >{{alert.metadata.malwareFormatted}}</span>
+                </div>
+              {{/if}}
+              {{#if alert.metadata.vulnerabilitiesData}}
+                <div class="dataminr-alert-metadata-section dataminr-alert-metadata-vulnerabilities">
+                  <div class="dataminr-alert-metadata-vulnerability-main">
+                    <span class="dataminr-alert-metadata-label">Vulnerability:</span>
+                    <span class="dataminr-alert-metadata-value">
+                      {{#if alert.metadata.vulnerabilitiesData.first.id}}
+                        <span class="dataminr-vulnerability-id">{{alert.metadata.vulnerabilitiesData.first.id}}</span>
+                      {{/if}}
+                      {{#if alert.metadata.vulnerabilitiesData.first.cvss}}
+                        <span class="dataminr-vulnerability-separator"> | </span>
+                        <span class="dataminr-vulnerability-cvss">CVSS: {{alert.metadata.vulnerabilitiesData.first.cvss}}</span>
+                      {{/if}}
+                    </span>
+                  </div>
+                  {{#if alert.metadata.vulnerabilitiesData.first.vendors.items.length}}
+                    <div class="dataminr-alert-metadata-vulnerability-detail">
+                      <span class="dataminr-alert-metadata-vulnerability-detail-label">Vendor:</span>
+                      <ul class="dataminr-alert-metadata-vulnerability-list">
+                        {{#each alert.metadata.vulnerabilitiesData.first.vendors.items as |vendor|}}
+                          <li class="dataminr-alert-metadata-vulnerability-list-item">
+                            <span class="dataminr-vulnerability-value">{{vendor}}</span>
+                          </li>
+                        {{/each}}
+                        {{#if alert.metadata.vulnerabilitiesData.first.vendors.hasMore}}
+                          <li class="dataminr-alert-metadata-vulnerability-list-item">
+                            <span class="dataminr-vulnerability-more-text">{{alert.metadata.vulnerabilitiesData.first.vendors.moreText}}</span>
+                          </li>
+                        {{/if}}
+                      </ul>
+                    </div>
+                  {{/if}}
+                  {{#if alert.metadata.vulnerabilitiesData.first.products.items.length}}
+                    <div class="dataminr-alert-metadata-vulnerability-detail">
+                      <span class="dataminr-alert-metadata-vulnerability-detail-label">Impacted Product:</span>
+                      <ul class="dataminr-alert-metadata-vulnerability-list">
+                        {{#each alert.metadata.vulnerabilitiesData.first.products.items as |product|}}
+                          <li class="dataminr-alert-metadata-vulnerability-list-item">
+                            <span class="dataminr-vulnerability-value">
+                              {{#if product.productVendor}}{{product.productVendor}} {{/if}}{{#if product.productName}}{{product.productName}}{{/if}}{{#if product.productVersion}} {{product.productVersion}}{{/if}}
+                            </span>
+                          </li>
+                        {{/each}}
+                        {{#if alert.metadata.vulnerabilitiesData.first.products.hasMore}}
+                          <li class="dataminr-alert-metadata-vulnerability-list-item">
+                            <span class="dataminr-vulnerability-more-text">{{alert.metadata.vulnerabilitiesData.first.products.moreText}}</span>
+                          </li>
+                        {{/if}}
+                      </ul>
+                    </div>
+                  {{/if}}
+                  {{#if alert.metadata.vulnerabilitiesData.first.exploitPocLinks.items.length}}
+                    <div class="dataminr-alert-metadata-vulnerability-detail">
+                      <span class="dataminr-alert-metadata-vulnerability-detail-label">Exploit POC Links:</span>
+                      <ul class="dataminr-alert-metadata-vulnerability-list">
+                        {{#each alert.metadata.vulnerabilitiesData.first.exploitPocLinks.items as |link|}}
+                          <li class="dataminr-alert-metadata-vulnerability-list-item">
+                            <a href="{{link}}" target="_blank" rel="noopener noreferrer" class="dataminr-vulnerability-link">{{link}}</a>
+                          </li>
+                        {{/each}}
+                        {{#if alert.metadata.vulnerabilitiesData.first.exploitPocLinks.hasMore}}
+                          <li class="dataminr-alert-metadata-vulnerability-list-item">
+                            <span class="dataminr-vulnerability-more-text">{{alert.metadata.vulnerabilitiesData.first.exploitPocLinks.moreText}}</span>
+                          </li>
+                        {{/if}}
+                      </ul>
+                    </div>
+                  {{/if}}
+                  {{#if alert.metadata.vulnerabilitiesData.additionalCount}}
+                    <span class="dataminr-vulnerability-more-count">+{{alert.metadata.vulnerabilitiesData.additionalCount}} more {{#if (eq alert.metadata.vulnerabilitiesData.additionalCount 1)}}vulnerability{{else}}vulnerabilities{{/if}}</span>
+                  {{/if}}
+                  {{#if (or alert.metadata.vulnerabilitiesData.additionalCount alert.metadata.vulnerabilitiesData.hasTruncatedLists)}}
+                    <div class="dataminr-vulnerability-view-details-trigger-container">
+                      <div role="separator" aria-orientation="horizontal" class="dataminr-vulnerability-divider"></div>
+                      <span class="dataminr-vulnerability-view-details-trigger">View additional details</span>
+                    </div>
+                  {{/if}}
                 </div>
               {{/if}}
             </div>
@@ -589,6 +667,160 @@
           </div>
         {{/if}}
       </div>
+      {{#if alert.metadata.vulnerabilitiesData}}
+        {{#if (or alert.metadata.vulnerabilitiesData.additionalCount alert.metadata.vulnerabilitiesData.hasTruncatedLists)}}
+          <div class="dataminr-metadata-details-overlay" style="display: none;">
+            <div class="dataminr-metadata-details-overlay-content">
+              <header class="dataminr-metadata-details-overlay-header">
+                <section class="dataminr-metadata-details-overlay-header-left">
+                  <div class="dataminr-metadata-details-overlay-title-group">
+                    <h3 class="dataminr-metadata-details-overlay-title">Key Points</h3>
+                  </div>
+                  <div class="dataminr-metadata-details-overlay-close-wrapper">
+                    <button class="dataminr-metadata-details-overlay-close" aria-label="Back to alert details" name="close">
+                      <svg height="24" width="24" viewBox="0 0 24 24" fill="none">
+                        <path d="M15.41 7.41L14 6L8 12L14 18L15.41 16.59L10.83 12L15.41 7.41Z" fill="currentColor"/>
+                      </svg>
+                      <span class="dataminr-metadata-details-overlay-back-text">Back</span>
+                    </button>
+                  </div>
+                </section>
+              </header>
+              <section class="dataminr-metadata-details-overlay-body">
+                <div class="dataminr-metadata-details-overlay-sections">
+                  {{! Threat Actors Section }}
+                  {{#if alert.metadata.threatActors.length}}
+                    <div class="dataminr-metadata-overlay-section">
+                      <span class="dataminr-alert-metadata-label">Threats:</span>
+                      <ul class="dataminr-metadata-overlay-list">
+                        {{#each alert.metadata.threatActors as |actor|}}
+                          <li class="dataminr-metadata-overlay-list-item">{{actor.name}}</li>
+                        {{/each}}
+                      </ul>
+                    </div>
+                  {{/if}}
+
+                  {{! URLs Section }}
+                  {{#if alert.metadata.URL.length}}
+                    <div class="dataminr-metadata-overlay-section">
+                      <span class="dataminr-alert-metadata-label">URLs:</span>
+                      <ul class="dataminr-metadata-overlay-list">
+                        {{#each alert.metadata.URL as |url|}}
+                          <li class="dataminr-metadata-overlay-list-item">{{url.name}}</li>
+                        {{/each}}
+                      </ul>
+                    </div>
+                  {{/if}}
+
+                  {{! Addresses Section }}
+                  {{#if alert.metadata.addresses.length}}
+                    <div class="dataminr-metadata-overlay-section">
+                      <span class="dataminr-alert-metadata-label">Addresses:</span>
+                      <ul class="dataminr-metadata-overlay-list">
+                        {{#each alert.metadata.addresses as |address|}}
+                          <li class="dataminr-metadata-overlay-list-item">{{address.ip}}{{#if address.port}}:{{address.port}}{{/if}}{{#if address.version}} ({{address.version}}){{/if}}</li>
+                        {{/each}}
+                      </ul>
+                    </div>
+                  {{/if}}
+
+                  {{! AS Organizations Section }}
+                  {{#if alert.metadata.asOrgs.length}}
+                    <div class="dataminr-metadata-overlay-section">
+                      <span class="dataminr-alert-metadata-label">AS Organizations:</span>
+                      <ul class="dataminr-metadata-overlay-list">
+                        {{#each alert.metadata.asOrgs as |asOrg|}}
+                          <li class="dataminr-metadata-overlay-list-item">{{asOrg.asn}}{{#if asOrg.asOrg}} ({{asOrg.asOrg}}){{/if}}</li>
+                        {{/each}}
+                      </ul>
+                    </div>
+                  {{/if}}
+
+                  {{! Hash Values Section }}
+                  {{#if alert.metadata.hashValues.length}}
+                    <div class="dataminr-metadata-overlay-section">
+                      <span class="dataminr-alert-metadata-label">Hashes:</span>
+                      <ul class="dataminr-metadata-overlay-list">
+                        {{#each alert.metadata.hashValues as |hash|}}
+                          <li class="dataminr-metadata-overlay-list-item">{{hash.value}}{{#if hash.type}} ({{hash.type}}){{/if}}</li>
+                        {{/each}}
+                      </ul>
+                    </div>
+                  {{/if}}
+
+                  {{! Malware Section }}
+                  {{#if alert.metadata.malware.length}}
+                    <div class="dataminr-metadata-overlay-section">
+                      <span class="dataminr-alert-metadata-label">Malware:</span>
+                      <ul class="dataminr-metadata-overlay-list">
+                        {{#each alert.metadata.malware as |mal|}}
+                          <li class="dataminr-metadata-overlay-list-item">{{mal.name}}</li>
+                        {{/each}}
+                      </ul>
+                    </div>
+                  {{/if}}
+
+                  {{! Vulnerabilities Section }}
+                  {{#each alert.metadata.vulnerabilitiesData.all as |vuln|}}
+                    <div class="dataminr-vulnerability-item">
+                      <div class="dataminr-alert-metadata-vulnerability-main">
+                        <span class="dataminr-alert-metadata-label">Vulnerability:</span>
+                        <span class="dataminr-alert-metadata-value">
+                          {{#if vuln.id}}
+                            <span class="dataminr-vulnerability-id">{{vuln.id}}</span>
+                          {{/if}}
+                          {{#if vuln.cvss}}
+                            <span class="dataminr-vulnerability-separator"> | </span>
+                            <span class="dataminr-vulnerability-cvss">CVSS: {{vuln.cvss}}</span>
+                          {{/if}}
+                        </span>
+                      </div>
+                      {{#if vuln.vendorsFull.length}}
+                        <div class="dataminr-alert-metadata-vulnerability-detail">
+                          <span class="dataminr-alert-metadata-vulnerability-detail-label">Vendor:</span>
+                          <ul class="dataminr-alert-metadata-vulnerability-list">
+                            {{#each vuln.vendorsFull as |vendor|}}
+                              <li class="dataminr-alert-metadata-vulnerability-list-item">
+                                <span class="dataminr-vulnerability-value">{{vendor}}</span>
+                              </li>
+                            {{/each}}
+                          </ul>
+                        </div>
+                      {{/if}}
+                      {{#if vuln.productsFull.length}}
+                        <div class="dataminr-alert-metadata-vulnerability-detail">
+                          <span class="dataminr-alert-metadata-vulnerability-detail-label">Impacted Product:</span>
+                          <ul class="dataminr-alert-metadata-vulnerability-list">
+                            {{#each vuln.productsFull as |product|}}
+                              <li class="dataminr-alert-metadata-vulnerability-list-item">
+                                <span class="dataminr-vulnerability-value">
+                                  {{#if product.productVendor}}{{product.productVendor}} {{/if}}{{#if product.productName}}{{product.productName}}{{/if}}{{#if product.productVersion}} {{product.productVersion}}{{/if}}
+                                </span>
+                              </li>
+                            {{/each}}
+                          </ul>
+                        </div>
+                      {{/if}}
+                      {{#if vuln.exploitPocLinksFull.length}}
+                        <div class="dataminr-alert-metadata-vulnerability-detail">
+                          <span class="dataminr-alert-metadata-vulnerability-detail-label">Exploit POC Links:</span>
+                          <ul class="dataminr-alert-metadata-vulnerability-list">
+                            {{#each vuln.exploitPocLinksFull as |link|}}
+                              <li class="dataminr-alert-metadata-vulnerability-list-item">
+                                <a href="{{link}}" target="_blank" rel="noopener noreferrer" class="dataminr-vulnerability-link">{{link}}</a>
+                              </li>
+                            {{/each}}
+                          </ul>
+                        </div>
+                      {{/if}}
+                    </div>
+                  {{/each}}
+                </div>
+              </section>
+            </div>
+          </div>
+        {{/if}}
+      {{/if}}
       <div class="dataminr-entity-details-container" style="display: none;">
         <div class="dataminr-entity-details-content">
           <header class="dataminr-entity-details-header">

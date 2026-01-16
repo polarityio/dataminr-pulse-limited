@@ -2,7 +2,28 @@
   "polarityIntegrationUuid": "b143402f-4a32-4d27-ba32-b75292f451bf",
   "name": "Dataminr Pulse (Limited)",
   "acronym": "DMPL",
-  "description": "Limited version of the Dataminr Pulse integration. Search Dataminr Pulse by all entities to hits. Pin Dataminr Pulse incoming alerts (Flash and Urgent only) to the top of Polarity for instant notification.",
+  "description": "Limited version of the Dataminr Pulse integration. Search Dataminr Pulse by all entities to get related Alerts. Pin Dataminr Pulse incoming alerts (Flash and Urgent only) to the top of Polarity for instant notification.",
+  "dataTypes": [
+    "domain",
+    "IPv4",
+    "IPv6",
+    "IPv4CIDR",
+    "email",
+    "MD5",
+    "SHA1",
+    "SHA256",
+    "cve",
+    "url",
+    {
+      "type": "custom",
+      "name": "All Text",
+      "description": "Matches on all possible text",
+      "editable": false,
+      "enabled": false,
+      "key": "allText",
+      "regex": "\\S[\\s\\S]{2,256}\\S"
+    }
+  ],
   "entityTypes": [
     "domain",
     "IPv4",
@@ -60,7 +81,7 @@
     {
       "key": "setListsToWatch",
       "name": "Filter Lists",
-      "description": "Filter the lists for pinned alerts",
+      "description": "User can filter the alerts based on lists for pinned alerts",
       "type": "select",
       "default": [],
       "userCanEdit": true,
@@ -71,18 +92,9 @@
     {
       "key": "setAlertTypesToWatch",
       "name": "Filter Alert Types",
-      "description": "Filter the alert types retrieved for pinned alerts",
+      "description": "Admin can filter the alert types retrieved for pinned alerts",
       "type": "select",
-      "default": [
-        {
-          "value": "flash",
-          "display": "Flash"
-        },
-        {
-          "value": "urgent",
-          "display": "Urgent"
-        }
-      ],
+      "default": [],
       "userCanEdit": false,
       "adminOnly": true,
       "multiple": true,

@@ -252,6 +252,10 @@ img {
   display: flex;
   align-items: center;
   gap: 4px;
+
+  #dataminr-alert-icon-none {
+    background-color: @color-text-secondary;
+  }
 }
 
 .dataminr-alert-icon {
@@ -418,7 +422,8 @@ img {
    Alert Details Styles
    ============================================ */
 
-.dataminr-alert-details {
+.dataminr-alert-details,
+.dataminr-entity-details {
   padding: 0 14px 8px 0;
   margin: 0 -4px 0 4px;
 
@@ -427,7 +432,8 @@ img {
   }
 }
 
-.dm-jewel-theme.dataminr-alert-details {
+.dm-jewel-theme.dataminr-alert-details,
+.dm-jewel-theme.dataminr-entity-details {
   padding: 0 0 8px 0px;
   margin: 0;
 
@@ -437,17 +443,21 @@ img {
   }
 }
 
-.polarity-x-client.dataminr-alert-details {
+.polarity-x-client.dataminr-alert-details,
+.polarity-x-client.dataminr-entity-details {
   margin: 0 -2px 0 0;
   padding: 0 5px 5px;
 }
 
-.dm-jewel-theme.polarity-x-client.dataminr-alert-details {
+.dm-jewel-theme.polarity-x-client.dataminr-alert-details,
+.dm-jewel-theme.polarity-x-client.dataminr-entity-details {
   padding-right: 0;
   margin: 0 -5px 0 0;
 }
 
-.dataminr-alert-detail {
+.dataminr-alert-detail,
+.dataminr-entity-detail {
+  position: relative;
   display: none;
   padding: 10px;
   margin-top: 7px;
@@ -457,11 +467,13 @@ img {
   color: @color-text-primary;
 }
 
-.polarity-x-client .dataminr-alert-detail {
+.polarity-x-client .dataminr-alert-detail,
+.polarity-x-client .dataminr-entity-detail {
   margin-top: 3px;
 }
 
-.dataminr-alert-search-details .dataminr-alert-detail {
+.dataminr-alert-search-details .dataminr-alert-detail,
+.dataminr-alert-search-details .dataminr-entity-detail {
   margin: 10px 0;
   display: block;
 }
@@ -645,6 +657,107 @@ img {
   background-color: @color-bg-metadata;
   padding: 10px;
   border-radius: 4px;
+}
+
+.dataminr-alert-metadata-section {
+  margin-bottom: 12px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.dataminr-alert-metadata-label {
+  font-weight: 600;
+  color: @color-text-secondary;
+  margin-right: 8px;
+}
+
+.dataminr-alert-metadata-value {
+  color: @color-text-primary;
+}
+
+/* Vulnerability-specific styles */
+.dataminr-alert-metadata-vulnerabilities,
+.dataminr-metadata-details-overlay {
+  .dataminr-alert-metadata-vulnerability-main {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .dataminr-vulnerability-id {
+    color: @color-text-primary;
+    font-weight: 500;
+  }
+
+  .dataminr-vulnerability-separator {
+    color: @color-text-secondary;
+    margin: 0 4px;
+  }
+
+  .dataminr-vulnerability-cvss {
+    color: @color-text-primary;
+  }
+
+  .dataminr-alert-metadata-vulnerability-detail {
+    margin-top: 8px;
+    margin-bottom: 8px;
+    margin-left: 10px;
+  }
+
+  .dataminr-alert-metadata-vulnerability-detail-label {
+    font-weight: 400;
+    color: @color-text-secondary;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .dataminr-alert-metadata-vulnerability-list {
+    display: block;
+    list-style-type: disc;
+    margin: 0;
+    padding-left: 20px;
+  }
+
+  .dataminr-alert-metadata-vulnerability-list-item {
+    display: list-item;
+    margin: 0;
+    padding: 0;
+  }
+
+  .dataminr-vulnerability-value {
+    color: @color-text-primary;
+  }
+
+  .dataminr-vulnerability-more-text {
+    color: @color-text-secondary;
+    font-style: italic;
+    font-size: 12px;
+  }
+
+  .dataminr-vulnerability-link {
+    color: @color-link-icon !important;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .dataminr-vulnerability-more-count {
+    color: @color-text-secondary;
+    font-size: 12px;
+    display: inline-block;
+    margin-top: 4px;
+  }
+
+  .dataminr-vulnerability-divider {
+    height: 1px;
+    background-color: @color-border;
+    margin: 12px 0;
+    border: none;
+  }
 }
 
 .dataminr-alert-companies,
@@ -834,11 +947,6 @@ img {
 /* ============================================
    Entity Details Container Styles
    ============================================ */
-
-.dataminr-alert-detail {
-  position: relative;
-}
-
 .dataminr-entity-details-container {
   position: absolute;
   top: 0;
@@ -1073,6 +1181,153 @@ img {
 
   svg {
     flex-shrink: 0;
+  }
+}
+
+/* ============================================
+   Metadata Details Overlay Styles (Key Points)
+   ============================================ */
+
+.dataminr-metadata-details-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  margin: 0;
+  padding: 0;
+}
+
+.dataminr-metadata-details-overlay-content {
+  background-color: @color-bg-alert;
+  border: 1px solid @color-border;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.dataminr-metadata-details-overlay-header {
+  padding: 0;
+}
+
+.dataminr-metadata-details-overlay-header section {
+  padding: 16px 20px;
+}
+
+.dataminr-metadata-details-overlay-header-left {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.dataminr-metadata-details-overlay-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.dataminr-metadata-details-overlay-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: @color-text-primary;
+  margin: 0;
+}
+
+.dataminr-metadata-details-overlay-close-wrapper {
+  flex-shrink: 0;
+  margin-left: 16px;
+}
+
+.dataminr-metadata-details-overlay-close {
+  background: none;
+  border: none;
+  color: @color-text-primary;
+  cursor: pointer;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: color 0.2s ease, opacity 0.2s ease;
+  opacity: 0.7;
+  min-width: auto;
+  height: 32px;
+  border-radius: 4px;
+
+  &:hover {
+    color: @color-primary;
+    opacity: 1;
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  &:focus {
+    outline: 2px solid @color-primary;
+    outline-offset: 2px;
+  }
+
+  svg {
+    display: block;
+    flex-shrink: 0;
+  }
+}
+
+.dataminr-metadata-details-overlay-back-text {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.dataminr-metadata-details-overlay-body {
+  padding: 0 20px 20px 20px;
+  color: @color-text-primary;
+}
+
+.dataminr-metadata-details-overlay-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.dataminr-metadata-details-overlay-sections .dataminr-vulnerability-item,
+.dataminr-metadata-details-overlay-sections .dataminr-metadata-overlay-section {
+  padding: 16px;
+  background-color: @color-bg-metadata;
+  border-radius: 4px;
+  margin-bottom: 15px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.dataminr-metadata-overlay-list {
+  display: block;
+  list-style-type: disc;
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+}
+
+.dataminr-metadata-overlay-list-item {
+  display: list-item;
+  margin: 0;
+  padding: 0;
+  color: @color-text-primary;
+}
+
+.dataminr-vulnerability-view-details-trigger-container {
+  margin-top: 12px;
+}
+
+.dataminr-vulnerability-view-details-trigger {
+  color: @color-link-icon;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+
+  &:hover {
+    text-decoration: underline;
   }
 }
 

@@ -1,4 +1,5 @@
 const NodeCache = require('node-cache');
+const { STATE_KEY, ALERTS_KEY, LISTS_KEY, CACHE_MAX_AGE_MS } = require('../constants');
 
 // Cache for storing polling state
 // Key: 'pollingState', Value: { lastCursor, lastPollTime, alertCount }
@@ -8,15 +9,15 @@ const stateCache = new NodeCache({ stdTTL: 0 }); // No expiration
 // Key: 'alerts', Value: Array of alert objects
 const alertsCache = new NodeCache({ stdTTL: 0 }); // No expiration
 
-const STATE_KEY = 'pollingState';
-const ALERTS_KEY = 'alerts';
-const CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour in milliseconds
+// Global cache for storing lists
+// Key: 'lists', Value: Array of list objects with value and display properties
+const listsCache = new NodeCache({ stdTTL: 0 }); // No expiration
 
 /**
  * Get the current polling state
  * @returns {Object} Polling state object
  * @returns {string|null} returns.lastCursor - Last pagination cursor used
- * @returns {string|null} returns.lastPollTime - ISO timestamp of last poll
+ * @returns {number|null} returns.lastPollTime - epoch milliseconds timestamp of last poll
  * @returns {number} returns.alertCount - Number of alerts in last poll
  * @returns {number} returns.totalAlertsProcessed - Total alerts processed since reset
  */
@@ -35,6 +36,7 @@ const getPollingState = () => {
  * Update the polling state with new values
  * @param {Object} updates - Partial state object to merge with current state
  * @param {string} [updates.lastCursor] - New pagination cursor
+ * @param {number} [updates.lastPollTime] - epoch milliseconds timestamp of last poll
  * @param {number} [updates.alertCount] - Number of alerts in current poll
  * @param {number} [updates.totalAlertsProcessed] - Total alerts processed
  * @returns {Object} Updated polling state object
@@ -43,8 +45,7 @@ const updatePollingState = (updates) => {
   const currentState = getPollingState();
   const newState = {
     ...currentState,
-    ...updates,
-    lastPollTime: new Date().toISOString()
+    ...updates
   };
   stateCache.set(STATE_KEY, newState);
   return newState;
@@ -60,20 +61,38 @@ const resetPollingState = () => {
 
 /**
  * Filter alerts to remove those older than the max cache age
+ * Optionally also filter by alertFilterTimestamp if provided
  * @param {Array<Object>} alerts - Array of alert objects
- * @returns {Array<Object>} Filtered array of alerts (only those within max age)
+ * @param {string|null} alertFilterTimestamp - Optional ISO timestamp to filter alerts (returns alerts after this timestamp)
+ * @returns {Array<Object>} Filtered array of alerts (only those within max age and after alertFilterTimestamp if provided)
  */
-const filterAlertsByAge = (alerts) => {
+const filterAlertsByAge = (alerts, alertFilterTimestamp = null) => {
   const now = Date.now();
   const maxAge = CACHE_MAX_AGE_MS;
-  
+
+  // Convert alertFilterTimestamp to milliseconds if provided
+  const filterTimestamp = alertFilterTimestamp
+    ? new Date(alertFilterTimestamp).getTime()
+    : null;
+
   return alerts.filter((alert) => {
     if (!alert.alertTimestamp) {
       return false; // Remove alerts without timestamps
     }
     const alertTime = new Date(alert.alertTimestamp).getTime();
     const age = now - alertTime;
-    return age <= maxAge;
+
+    // Must be within max age
+    if (age > maxAge) {
+      return false;
+    }
+
+    // If alertFilterTimestamp is provided, alert must be newer than it
+    if (filterTimestamp !== null && alertTime <= filterTimestamp) {
+      return false;
+    }
+
+    return true;
   });
 };
 
@@ -82,20 +101,12 @@ const filterAlertsByAge = (alerts) => {
  * @param {Array<string>} [listIds] - Optional array of list IDs to filter by. If provided, only returns alerts that match any of the list IDs.
  * @returns {Array<Object>} Array of alert objects (sorted newest first)
  */
-const getCachedAlerts = (listIds = null) => {
+const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
   const alerts = alertsCache.get(ALERTS_KEY) || [];
-  let filteredAlerts = filterAlertsByAge(alerts);
-  
-  // Update cache if age filtering removed any alerts (always update cache after age filtering)
-  if (filteredAlerts.length !== alerts.length) {
-    alertsCache.set(ALERTS_KEY, filteredAlerts);
-  }
-  
+  let filteredAlerts = filterAlertsByAge(alerts, alertFilterTimestamp);
+
   // Filter by listIds if provided (this is a user-specific filter, doesn't affect cache)
   if (listIds && listIds.length > 0) {
-    // Convert listIds to strings for comparison (normalize all to strings)
-    const listIdsStrings = listIds.map(id => String(id).trim());
-    
     filteredAlerts = filteredAlerts.filter((alert) => {
       // Check if alert has listsMatched and if any match the requested listIds
       if (!alert.listsMatched || !Array.isArray(alert.listsMatched)) {
@@ -111,7 +122,7 @@ const getCachedAlerts = (listIds = null) => {
       });
     });
   }
-  
+
   return filteredAlerts;
 };
 
@@ -154,6 +165,7 @@ const addAlertsToCache = (alerts) => {
   // Filter out alerts older than 1 hour
   const filteredAlerts = filterAlertsByAge(deduplicatedAlerts);
 
+  // Update cache with filtered alerts
   alertsCache.set(ALERTS_KEY, filteredAlerts);
 
   return {
@@ -170,11 +182,51 @@ const clearCachedAlerts = () => {
   alertsCache.set(ALERTS_KEY, []);
 };
 
+/**
+ * Get the timestamp of the latest alert in the cache
+ * @returns {string|null} ISO timestamp of the latest alert, or null if no alerts
+ */
+const getLatestAlertTimestamp = () => {
+  const alerts = alertsCache.get(ALERTS_KEY) || [];
+  if (alerts.length > 0 && alerts[0].alertTimestamp) {
+    const timestamp = alerts[0].alertTimestamp;
+    // Ensure it's a valid ISO timestamp string
+    try {
+      return new Date(timestamp).toISOString();
+    } catch (error) {
+      return timestamp;
+    }
+  }
+  return null;
+};
+
+/**
+ * Get cached lists
+ * @returns {Array<Object>} Array of list objects with value and display properties
+ */
+const getCachedLists = () => {
+  return listsCache.get(LISTS_KEY) || [];
+};
+
+/**
+ * Set cached lists
+ * @param {Array<Object>} lists - Array of list objects with value and display properties
+ * @returns {void}
+ */
+const setCachedLists = (lists) => {
+  if (lists && Array.isArray(lists) && lists.length > 0) {
+    listsCache.set(LISTS_KEY, lists);
+  }
+};
+
 module.exports = {
   getPollingState,
   updatePollingState,
   resetPollingState,
   getCachedAlerts,
   addAlertsToCache,
-  clearCachedAlerts
+  clearCachedAlerts,
+  getLatestAlertTimestamp,
+  getCachedLists,
+  setCachedLists
 };
