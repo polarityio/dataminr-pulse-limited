@@ -1,6 +1,6 @@
 {
   "name": "dataminr-pulse-free",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "main": "./integration.js",
   "private": true,
   "dependencies": {

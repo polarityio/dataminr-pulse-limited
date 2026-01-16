@@ -33,18 +33,23 @@ const sleep = (ms) => {
 const pollAlerts = async (options) => {
   const Logger = getLogger();
 
+  // Initialize variables at function scope to ensure they're always defined in catch block
+  let totalAlertsProcessed = 0;
+  let pageCount = 0;
+  let lastCursor = null;
+  let hasMore = false;
+
   try {
     Logger.debug('Starting Dataminr API poll');
 
     const state = getPollingState();
     const isFirstPoll = !state.lastPollTime;
 
-    let totalAlertsProcessed = 0;
     // For subsequent polls, start with the saved cursor from last poll
     // This allows us to resume from where we left off in the stream
-    let lastCursor = isFirstPoll ? null : state.lastCursor || null;
-    let hasMore = false;
-    let pageCount = 0;
+    lastCursor = isFirstPoll ? null : state.lastCursor || null;
+    hasMore = false;
+    pageCount = 0;
 
     // First poll: get 10 alerts to start
     // Subsequent polls: get all alerts since last alert timestamp by paginating through all pages
