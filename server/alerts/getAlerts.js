@@ -122,7 +122,8 @@ const getAlerts = async (
   } catch (error) {
     // Handle rate limiting (429) with a cleaner message
     const statusCode = error.statusCode || (error.meta && error.meta.statusCode);
-    if (statusCode === 429) {
+    const message = error.message || error.detail || 'Unknown error';
+    if (statusCode === 429 || statusCode === '429' || message.contains('429')) {
       Logger.warn(
         {
           statusCode: 429,
@@ -144,7 +145,7 @@ const getAlerts = async (
     Logger.error(
       {
         statusCode: statusCode,
-        message: error.message || error.detail || 'Unknown error',
+        message: message,
         detail: error.detail
       },
       'Getting Alerts Failed'

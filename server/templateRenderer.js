@@ -634,14 +634,25 @@ function processDiscoveredEntities(agents, alertUrl) {
             : '';
 
           // Include full entity data for modal display
-          discoveredEntities.push({
+          const entityData = {
             name: entity.name,
             url: entityDetailUrl,
             aliases: aliasesArray,
             aliasesFormatted: aliasesFormatted,
             summary: entity.summary || '',
-            type: entity.type || ''
-          });
+            type: entity.type || '',
+            products: entity.products || [],
+            cvss: entity.cvss,
+            epssScore: entity.epssScore,
+            countryOfOrigin: entity.countryOfOrigin || '',
+            exploitable: entity.exploitable,
+            ttps: entity.ttps || []
+          };
+          
+          // Add JSON string for easy access in client-side code
+          entityData.entityJson = JSON.stringify(entityData);
+          
+          discoveredEntities.push(entityData);
         }
       });
     }

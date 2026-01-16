@@ -201,7 +201,9 @@
               <div class="dataminr-message-card">
                 <ul class="dataminr-message-card-bullets-list">
                   {{#each alert.subHeadline.content as |contentItem|}}
-                    <li>{{contentItem}}</li>
+                    {{#if contentItem}}
+                      <li>{{contentItem}}</li>
+                    {{/if}}
                   {{/each}}
                 </ul>
                 <div class="dataminr-message-card-tweet-heading">
@@ -284,14 +286,16 @@
                   >{{group.typeHeader}}</div>
                   <ul class="dataminr-alert-intel-agents-summary-list">
                     {{#each group.summaries as |summary|}}
-                      <li class="dataminr-alert-intel-agents-summary-item">
-                        {{#if summary.title}}<strong>{{summary.title}}</strong>{{#if
+                      {{#if (or summary.title summary.contentText)}}
+                        <li class="dataminr-alert-intel-agents-summary-item">
+                          {{#if summary.title}}<strong>{{summary.title}}</strong>{{#if
+                              summary.contentText
+                            }}:
+                              {{summary.contentText}}{{/if}}{{else if
                             summary.contentText
-                          }}:
-                            {{summary.contentText}}{{/if}}{{else if
-                          summary.contentText
-                        }}{{summary.contentText}}{{/if}}
-                      </li>
+                          }}{{summary.contentText}}{{/if}}
+                        </li>
+                      {{/if}}
                     {{/each}}
                   </ul>
                 </div>
@@ -310,6 +314,7 @@
                         data-entity-summary="{{entity.summary}}"
                         data-entity-aliases="{{entity.aliasesFormatted}}"
                         data-entity-url="{{entity.url}}"
+                        data-entity-json="{{entity.entityJson}}"
                         title="View entity details"
                       >
                         <svg height="22" width="22" viewBox="0 0 24 24" fill="none">
@@ -495,9 +500,11 @@
                       <span class="dataminr-alert-metadata-vulnerability-detail-label">Vendor:</span>
                       <ul class="dataminr-alert-metadata-vulnerability-list">
                         {{#each alert.metadata.vulnerabilitiesData.first.vendors.items as |vendor|}}
-                          <li class="dataminr-alert-metadata-vulnerability-list-item">
-                            <span class="dataminr-vulnerability-value">{{vendor}}</span>
-                          </li>
+                          {{#if vendor}}
+                            <li class="dataminr-alert-metadata-vulnerability-list-item">
+                              <span class="dataminr-vulnerability-value">{{vendor}}</span>
+                            </li>
+                          {{/if}}
                         {{/each}}
                         {{#if alert.metadata.vulnerabilitiesData.first.vendors.hasMore}}
                           <li class="dataminr-alert-metadata-vulnerability-list-item">
@@ -512,11 +519,13 @@
                       <span class="dataminr-alert-metadata-vulnerability-detail-label">Impacted Product:</span>
                       <ul class="dataminr-alert-metadata-vulnerability-list">
                         {{#each alert.metadata.vulnerabilitiesData.first.products.items as |product|}}
-                          <li class="dataminr-alert-metadata-vulnerability-list-item">
-                            <span class="dataminr-vulnerability-value">
-                              {{#if product.productVendor}}{{product.productVendor}} {{/if}}{{#if product.productName}}{{product.productName}}{{/if}}{{#if product.productVersion}} {{product.productVersion}}{{/if}}
-                            </span>
-                          </li>
+                          {{#if (or product.productVendor product.productName product.productVersion)}}
+                            <li class="dataminr-alert-metadata-vulnerability-list-item">
+                              <span class="dataminr-vulnerability-value">
+                                {{#if product.productVendor}}{{product.productVendor}} {{/if}}{{#if product.productName}}{{product.productName}}{{/if}}{{#if product.productVersion}} {{product.productVersion}}{{/if}}
+                              </span>
+                            </li>
+                          {{/if}}
                         {{/each}}
                         {{#if alert.metadata.vulnerabilitiesData.first.products.hasMore}}
                           <li class="dataminr-alert-metadata-vulnerability-list-item">
@@ -531,9 +540,11 @@
                       <span class="dataminr-alert-metadata-vulnerability-detail-label">Exploit POC Links:</span>
                       <ul class="dataminr-alert-metadata-vulnerability-list">
                         {{#each alert.metadata.vulnerabilitiesData.first.exploitPocLinks.items as |link|}}
-                          <li class="dataminr-alert-metadata-vulnerability-list-item">
-                            <a href="{{link}}" target="_blank" rel="noopener noreferrer" class="dataminr-vulnerability-link">{{link}}</a>
-                          </li>
+                          {{#if link}}
+                            <li class="dataminr-alert-metadata-vulnerability-list-item">
+                              <a href="{{link}}" target="_blank" rel="noopener noreferrer" class="dataminr-vulnerability-link">{{link}}</a>
+                            </li>
+                          {{/if}}
                         {{/each}}
                         {{#if alert.metadata.vulnerabilitiesData.first.exploitPocLinks.hasMore}}
                           <li class="dataminr-alert-metadata-vulnerability-list-item">
@@ -694,7 +705,9 @@
                       <span class="dataminr-alert-metadata-label">Threats:</span>
                       <ul class="dataminr-metadata-overlay-list">
                         {{#each alert.metadata.threatActors as |actor|}}
-                          <li class="dataminr-metadata-overlay-list-item">{{actor.name}}</li>
+                          {{#if actor.name}}
+                            <li class="dataminr-metadata-overlay-list-item">{{actor.name}}</li>
+                          {{/if}}
                         {{/each}}
                       </ul>
                     </div>
@@ -706,7 +719,9 @@
                       <span class="dataminr-alert-metadata-label">URLs:</span>
                       <ul class="dataminr-metadata-overlay-list">
                         {{#each alert.metadata.URL as |url|}}
-                          <li class="dataminr-metadata-overlay-list-item">{{url.name}}</li>
+                          {{#if url.name}}
+                            <li class="dataminr-metadata-overlay-list-item">{{url.name}}</li>
+                          {{/if}}
                         {{/each}}
                       </ul>
                     </div>
@@ -718,7 +733,9 @@
                       <span class="dataminr-alert-metadata-label">Addresses:</span>
                       <ul class="dataminr-metadata-overlay-list">
                         {{#each alert.metadata.addresses as |address|}}
-                          <li class="dataminr-metadata-overlay-list-item">{{address.ip}}{{#if address.port}}:{{address.port}}{{/if}}{{#if address.version}} ({{address.version}}){{/if}}</li>
+                          {{#if address.ip}}
+                            <li class="dataminr-metadata-overlay-list-item">{{address.ip}}{{#if address.port}}:{{address.port}}{{/if}}{{#if address.version}} ({{address.version}}){{/if}}</li>
+                          {{/if}}
                         {{/each}}
                       </ul>
                     </div>
@@ -730,7 +747,9 @@
                       <span class="dataminr-alert-metadata-label">AS Organizations:</span>
                       <ul class="dataminr-metadata-overlay-list">
                         {{#each alert.metadata.asOrgs as |asOrg|}}
-                          <li class="dataminr-metadata-overlay-list-item">{{asOrg.asn}}{{#if asOrg.asOrg}} ({{asOrg.asOrg}}){{/if}}</li>
+                          {{#if asOrg.asn}}
+                            <li class="dataminr-metadata-overlay-list-item">{{asOrg.asn}}{{#if asOrg.asOrg}} ({{asOrg.asOrg}}){{/if}}</li>
+                          {{/if}}
                         {{/each}}
                       </ul>
                     </div>
@@ -742,7 +761,9 @@
                       <span class="dataminr-alert-metadata-label">Hashes:</span>
                       <ul class="dataminr-metadata-overlay-list">
                         {{#each alert.metadata.hashValues as |hash|}}
-                          <li class="dataminr-metadata-overlay-list-item">{{hash.value}}{{#if hash.type}} ({{hash.type}}){{/if}}</li>
+                          {{#if hash.value}}
+                            <li class="dataminr-metadata-overlay-list-item">{{hash.value}}{{#if hash.type}} ({{hash.type}}){{/if}}</li>
+                          {{/if}}
                         {{/each}}
                       </ul>
                     </div>
@@ -754,7 +775,9 @@
                       <span class="dataminr-alert-metadata-label">Malware:</span>
                       <ul class="dataminr-metadata-overlay-list">
                         {{#each alert.metadata.malware as |mal|}}
-                          <li class="dataminr-metadata-overlay-list-item">{{mal.name}}</li>
+                          {{#if mal.name}}
+                            <li class="dataminr-metadata-overlay-list-item">{{mal.name}}</li>
+                          {{/if}}
                         {{/each}}
                       </ul>
                     </div>
@@ -780,9 +803,11 @@
                           <span class="dataminr-alert-metadata-vulnerability-detail-label">Vendor:</span>
                           <ul class="dataminr-alert-metadata-vulnerability-list">
                             {{#each vuln.vendorsFull as |vendor|}}
-                              <li class="dataminr-alert-metadata-vulnerability-list-item">
-                                <span class="dataminr-vulnerability-value">{{vendor}}</span>
-                              </li>
+                              {{#if vendor}}
+                                <li class="dataminr-alert-metadata-vulnerability-list-item">
+                                  <span class="dataminr-vulnerability-value">{{vendor}}</span>
+                                </li>
+                              {{/if}}
                             {{/each}}
                           </ul>
                         </div>
@@ -792,11 +817,13 @@
                           <span class="dataminr-alert-metadata-vulnerability-detail-label">Impacted Product:</span>
                           <ul class="dataminr-alert-metadata-vulnerability-list">
                             {{#each vuln.productsFull as |product|}}
-                              <li class="dataminr-alert-metadata-vulnerability-list-item">
-                                <span class="dataminr-vulnerability-value">
-                                  {{#if product.productVendor}}{{product.productVendor}} {{/if}}{{#if product.productName}}{{product.productName}}{{/if}}{{#if product.productVersion}} {{product.productVersion}}{{/if}}
-                                </span>
-                              </li>
+                              {{#if (or product.productVendor product.productName product.productVersion)}}
+                                <li class="dataminr-alert-metadata-vulnerability-list-item">
+                                  <span class="dataminr-vulnerability-value">
+                                    {{#if product.productVendor}}{{product.productVendor}} {{/if}}{{#if product.productName}}{{product.productName}}{{/if}}{{#if product.productVersion}} {{product.productVersion}}{{/if}}
+                                  </span>
+                                </li>
+                              {{/if}}
                             {{/each}}
                           </ul>
                         </div>
@@ -806,9 +833,11 @@
                           <span class="dataminr-alert-metadata-vulnerability-detail-label">Exploit POC Links:</span>
                           <ul class="dataminr-alert-metadata-vulnerability-list">
                             {{#each vuln.exploitPocLinksFull as |link|}}
-                              <li class="dataminr-alert-metadata-vulnerability-list-item">
-                                <a href="{{link}}" target="_blank" rel="noopener noreferrer" class="dataminr-vulnerability-link">{{link}}</a>
-                              </li>
+                              {{#if link}}
+                                <li class="dataminr-alert-metadata-vulnerability-list-item">
+                                  <a href="{{link}}" target="_blank" rel="noopener noreferrer" class="dataminr-vulnerability-link">{{link}}</a>
+                                </li>
+                              {{/if}}
                             {{/each}}
                           </ul>
                         </div>
@@ -849,6 +878,24 @@
             <section class="dataminr-entity-details-body-content">
               <div class="dataminr-entity-details-tab-panel">
                 <div class="dataminr-entity-details-sections">
+                  <div class="dataminr-entity-details-card" id="dataminr-entity-details-scores-section" style="display: none;">
+                    <article class="dataminr-entity-details-card-content">
+                      <div class="dataminr-entity-details-card-body">
+                        <div class="dataminr-entity-details-score-item" id="dataminr-entity-details-cvss-item" style="display: none;">
+                          <span class="dataminr-entity-details-score-label">CVSS Score:</span>
+                          <span class="dataminr-entity-details-score-value" id="dataminr-entity-details-cvss-value"></span>
+                        </div>
+                        <div class="dataminr-entity-details-score-item" id="dataminr-entity-details-epss-item" style="display: none;">
+                          <span class="dataminr-entity-details-score-label">EPSS Score:</span>
+                          <span class="dataminr-entity-details-score-value" id="dataminr-entity-details-epss-value"></span>
+                        </div>
+                        <div class="dataminr-entity-details-score-item" id="dataminr-entity-details-exploitable-item" style="display: none;">
+                          <span class="dataminr-entity-details-score-label">Exploitable:</span>
+                          <span class="dataminr-entity-details-score-value" id="dataminr-entity-details-exploitable-value"></span>
+                        </div>
+                      </div>
+                    </article>
+                  </div>
                   <div class="dataminr-entity-details-card" id="dataminr-entity-details-summary-section" style="display: none;">
                     <article class="dataminr-entity-details-card-content">
                       <div class="dataminr-entity-details-summary-wrapper">
@@ -861,6 +908,30 @@
                       <h3 class="dataminr-entity-details-card-heading">Aliases</h3>
                       <div class="dataminr-entity-details-card-body">
                         <ul class="dataminr-entity-details-aliases-list"></ul>
+                      </div>
+                    </article>
+                  </div>
+                  <div class="dataminr-entity-details-card" id="dataminr-entity-details-products-section" style="display: none;">
+                    <article class="dataminr-entity-details-card-content">
+                      <h3 class="dataminr-entity-details-card-heading">Products</h3>
+                      <div class="dataminr-entity-details-card-body">
+                        <ul class="dataminr-entity-details-products-list"></ul>
+                      </div>
+                    </article>
+                  </div>
+                  <div class="dataminr-entity-details-card" id="dataminr-entity-details-country-section" style="display: none;">
+                    <article class="dataminr-entity-details-card-content">
+                      <h3 class="dataminr-entity-details-card-heading">Country of Origin</h3>
+                      <div class="dataminr-entity-details-card-body">
+                        <p class="dataminr-entity-details-country-value"></p>
+                      </div>
+                    </article>
+                  </div>
+                  <div class="dataminr-entity-details-card" id="dataminr-entity-details-ttps-section" style="display: none;">
+                    <article class="dataminr-entity-details-card-content">
+                      <h3 class="dataminr-entity-details-card-heading">Threat Techniques (TTPs)</h3>
+                      <div class="dataminr-entity-details-card-body">
+                        <ul class="dataminr-entity-details-ttps-list"></ul>
                       </div>
                     </article>
                   </div>

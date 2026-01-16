@@ -118,7 +118,7 @@ const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
           return false;
         }
         const matchedListId = String(matchedList.id).trim();
-        return listIdsStrings.includes(matchedListId);
+        return listIds.includes(matchedListId);
       });
     });
   }

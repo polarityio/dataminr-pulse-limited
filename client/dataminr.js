@@ -2213,6 +2213,164 @@ class DataminrIntegration {
       }
     }
 
+    // Products
+    const productsList = detailsContainer.querySelector(
+      '.dataminr-entity-details-products-list'
+    );
+    const productsSection = detailsContainer.querySelector(
+      '#dataminr-entity-details-products-section'
+    );
+    if (
+      entityData.products &&
+      Array.isArray(entityData.products) &&
+      entityData.products.length > 0
+    ) {
+      if (productsList) {
+        productsList.innerHTML = '';
+        entityData.products.forEach((product) => {
+          if (product) {
+            const productElement = document.createElement('li');
+            const productParts = [];
+            if (product.productVendor) productParts.push(product.productVendor);
+            if (product.productName) productParts.push(product.productName);
+            if (product.productVersion) productParts.push(product.productVersion);
+            productElement.textContent = productParts.join(' ') || 'Unknown Product';
+            productsList.appendChild(productElement);
+          }
+        });
+      }
+      if (productsSection) {
+        productsSection.style.display = 'block';
+        aboutLabel.style.display = 'inline-block';
+      }
+    } else {
+      if (productsSection) {
+        productsSection.style.display = 'none';
+      }
+    }
+
+    // Scores (CVSS, EPSS, Exploitable)
+    const scoresSection = detailsContainer.querySelector(
+      '#dataminr-entity-details-scores-section'
+    );
+    const cvssItem = detailsContainer.querySelector('#dataminr-entity-details-cvss-item');
+    const cvssValue = detailsContainer.querySelector('#dataminr-entity-details-cvss-value');
+    const epssItem = detailsContainer.querySelector('#dataminr-entity-details-epss-item');
+    const epssValue = detailsContainer.querySelector('#dataminr-entity-details-epss-value');
+    const exploitableItem = detailsContainer.querySelector(
+      '#dataminr-entity-details-exploitable-item'
+    );
+    const exploitableValue = detailsContainer.querySelector(
+      '#dataminr-entity-details-exploitable-value'
+    );
+
+    let hasScores = false;
+
+    // CVSS Score
+    if (entityData.cvss !== null && entityData.cvss !== undefined) {
+      if (cvssValue) {
+        cvssValue.textContent = entityData.cvss.toFixed(1);
+      }
+      if (cvssItem) {
+        cvssItem.style.display = 'block';
+        hasScores = true;
+      }
+    } else {
+      if (cvssItem) {
+        cvssItem.style.display = 'none';
+      }
+    }
+
+    // EPSS Score
+    if (entityData.epssScore !== null && entityData.epssScore !== undefined) {
+      if (epssValue) {
+        epssValue.textContent = entityData.epssScore.toFixed(4);
+      }
+      if (epssItem) {
+        epssItem.style.display = 'block';
+        hasScores = true;
+      }
+    } else {
+      if (epssItem) {
+        epssItem.style.display = 'none';
+      }
+    }
+
+    // Exploitable
+    if (entityData.exploitable !== null && entityData.exploitable !== undefined) {
+      if (exploitableValue) {
+        exploitableValue.textContent = entityData.exploitable ? 'Yes' : 'No';
+      }
+      if (exploitableItem) {
+        exploitableItem.style.display = 'block';
+        hasScores = true;
+      }
+    } else {
+      if (exploitableItem) {
+        exploitableItem.style.display = 'none';
+      }
+    }
+
+    if (hasScores && scoresSection) {
+      scoresSection.style.display = 'block';
+      aboutLabel.style.display = 'inline-block';
+    } else {
+      if (scoresSection) {
+        scoresSection.style.display = 'none';
+      }
+    }
+
+    // Country of Origin
+    const countryValue = detailsContainer.querySelector(
+      '.dataminr-entity-details-country-value'
+    );
+    const countrySection = detailsContainer.querySelector(
+      '#dataminr-entity-details-country-section'
+    );
+    if (entityData.countryOfOrigin && entityData.countryOfOrigin.trim()) {
+      if (countryValue) {
+        countryValue.textContent = entityData.countryOfOrigin;
+      }
+      if (countrySection) {
+        countrySection.style.display = 'block';
+        aboutLabel.style.display = 'inline-block';
+      }
+    } else {
+      if (countrySection) {
+        countrySection.style.display = 'none';
+      }
+    }
+
+    // TTPs (Threat Techniques)
+    const ttpsList = detailsContainer.querySelector('.dataminr-entity-details-ttps-list');
+    const ttpsSection = detailsContainer.querySelector(
+      '#dataminr-entity-details-ttps-section'
+    );
+    if (entityData.ttps && Array.isArray(entityData.ttps) && entityData.ttps.length > 0) {
+      if (ttpsList) {
+        ttpsList.innerHTML = '';
+        entityData.ttps.forEach((ttp) => {
+          if (ttp) {
+            const ttpElement = document.createElement('li');
+            const ttpParts = [];
+            if (ttp.techniqueId) ttpParts.push(ttp.techniqueId);
+            if (ttp.techniqueName) ttpParts.push(ttp.techniqueName);
+            if (ttp.tacticName) ttpParts.push(`(${ttp.tacticName})`);
+            ttpElement.textContent = ttpParts.join(' ') || 'Unknown TTP';
+            ttpsList.appendChild(ttpElement);
+          }
+        });
+      }
+      if (ttpsSection) {
+        ttpsSection.style.display = 'block';
+        aboutLabel.style.display = 'inline-block';
+      }
+    } else {
+      if (ttpsSection) {
+        ttpsSection.style.display = 'none';
+      }
+    }
+
     let closeButton;
     let detailsContainerClone;
     // The alert is not pinned which means it is in the wrong location to be viewable
@@ -2903,21 +3061,43 @@ class DataminrIntegration {
       if (entityTrigger) {
         e.preventDefault();
         e.stopPropagation();
-        const entityName = entityTrigger.getAttribute('data-entity-name') || '';
-        const entityType = entityTrigger.getAttribute('data-entity-type') || '';
-        const entitySummary = entityTrigger.getAttribute('data-entity-summary') || '';
-        const entityAliasesStr = entityTrigger.getAttribute('data-entity-aliases') || '';
-        const entityUrl = entityTrigger.getAttribute('data-entity-url') || '';
+        // Try to get full entity data from JSON attribute first
+        let entityData = null;
+        const entityJsonStr = entityTrigger.getAttribute('data-entity-json');
+        if (entityJsonStr) {
+          try {
+            entityData = JSON.parse(entityJsonStr);
+          } catch (err) {
+            console.error('Failed to parse entity JSON data:', err);
+          }
+        }
+        
+        // Fallback to individual data attributes if JSON not available
+        if (!entityData) {
+          const entityName = entityTrigger.getAttribute('data-entity-name') || '';
+          const entityType = entityTrigger.getAttribute('data-entity-type') || '';
+          const entitySummary = entityTrigger.getAttribute('data-entity-summary') || '';
+          const entityAliasesStr = entityTrigger.getAttribute('data-entity-aliases') || '';
+          const entityUrl = entityTrigger.getAttribute('data-entity-url') || '';
 
-        // Parse aliases from comma-separated string
-        const entityAliases = entityAliasesStr
-          ? entityAliasesStr
-              .split(',')
-              .map((alias) => alias.trim())
-              .filter((alias) => alias)
-          : [];
+          // Parse aliases from comma-separated string
+          const entityAliases = entityAliasesStr
+            ? entityAliasesStr
+                .split(',')
+                .map((alias) => alias.trim())
+                .filter((alias) => alias)
+            : [];
 
-        if (entityName) {
+          entityData = {
+            name: entityName,
+            type: entityType,
+            summary: entitySummary,
+            aliases: entityAliases,
+            url: entityUrl
+          };
+        }
+
+        if (entityData && entityData.name) {
           // Find the alert detail container
           const alertDetail = entityTrigger.closest('.dataminr-alert-detail');
           if (alertDetail) {
@@ -2931,21 +3111,12 @@ class DataminrIntegration {
               const currentTitle = existingDetails.querySelector(
                 '.dataminr-entity-details-title'
               );
-              if (currentTitle && currentTitle.textContent === entityName) {
+              if (currentTitle && currentTitle.textContent === entityData.name) {
                 return;
               }
             }
             // Show the entity details
-            this.showEntityDetails(
-              {
-                name: entityName,
-                type: entityType,
-                summary: entitySummary,
-                aliases: entityAliases,
-                url: entityUrl
-              },
-              entityTrigger
-            );
+            this.showEntityDetails(entityData, entityTrigger);
           }
         }
         return;

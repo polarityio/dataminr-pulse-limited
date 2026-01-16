@@ -43,3 +43,5 @@ key/
 .DS_Store
 
 legacy_wrapper.js
+build/
+build.sh
