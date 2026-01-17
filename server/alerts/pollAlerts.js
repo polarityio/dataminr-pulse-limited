@@ -6,7 +6,7 @@ const {
 const { getAlerts } = require('./getAlerts');
 const { getPollingState, updatePollingState } = require('./stateManager');
 const { processAlerts } = require('./alertProcessor');
-const { DEFAULT_PAGE_SIZE } = require('../constants');
+const { DEFAULT_PAGE_SIZE } = require('../../constants');
 
 /**
  * Sleep for a specified number of milliseconds

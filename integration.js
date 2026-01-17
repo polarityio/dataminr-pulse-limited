@@ -30,7 +30,7 @@ const {
   DEFAULT_ALERT_TYPES_TO_WATCH,
   TRIAL_MODE,
   LISTS_POLL_INTERVAL_MS
-} = require('./server/constants');
+} = require('./constants');
 
 let Logger = null;
 let alertPollingInterval = null;

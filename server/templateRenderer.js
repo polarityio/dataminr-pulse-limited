@@ -2,7 +2,7 @@ const Handlebars = require('handlebars');
 const fs = require('fs');
 const path = require('path');
 const { getAlertById } = require('./alerts/getAlerts');
-const { TRIAL_MODE } = require('./constants');
+const { TRIAL_MODE } = require('../constants');
 
 let templateCache = null;
 let notificationTemplateCache = null;

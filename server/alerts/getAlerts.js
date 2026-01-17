@@ -4,7 +4,7 @@ const {
 } = require('polarity-integration-utils');
 
 const { requestWithDefaults } = require('../request');
-const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../constants');
+const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../../constants');
 const { getCachedAlerts } = require('./stateManager');
 
 const parseNextPageCursor = (nextPage) => {
@@ -123,7 +123,7 @@ const getAlerts = async (
     // Handle rate limiting (429) with a cleaner message
     const statusCode = error.statusCode || (error.meta && error.meta.statusCode);
     const message = error.message || error.detail || 'Unknown error';
-    if (statusCode === 429 || statusCode === '429' || message.contains('429')) {
+    if (statusCode === 429 || statusCode === '429' || (typeof message === 'string' && message.includes('429'))) {
       Logger.warn(
         {
           statusCode: 429,

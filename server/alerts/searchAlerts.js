@@ -6,7 +6,7 @@ const {
 } = require('polarity-integration-utils');
 
 const { requestsInParallel } = require('../request');
-const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../constants');
+const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../../constants');
 
 /**
  * Search for alerts matching the given entities against all Lists

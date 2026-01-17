@@ -1,6 +1,6 @@
 const { size, map, some } = require('lodash/fp');
 const { getResultForThisEntity } = require('./dataTransformations');
-const { DEFAULT_PAGE_SIZE } = require('./constants');
+const { DEFAULT_PAGE_SIZE } = require('../constants');
 const { processAlertData } = require('./templateRenderer');
 
 /**

@@ -441,6 +441,7 @@ class DataminrIntegration {
     this.lastAlertTimestamp = null; // ISO timestamp of last alert
     this.maxVisibleTags = 10; // Maximum number of visible alert tags to display
     this.currentFilter = null; // Current alert type filter: null (all), 'Flash', 'Urgent', or 'Alert'
+    this.utils = new PolarityUtils();
 
     // Initialize the application
     this.init();
@@ -453,8 +454,8 @@ class DataminrIntegration {
    * @returns {Promise} Promise that resolves with the response
    */
   async sendIntegrationMessage(payload) {
-    if (window.PolarityUtils) {
-      return window.PolarityUtils.sendIntegrationMessage(payload, this.integrationId);
+    if (this.utils) {
+      return this.utils.sendIntegrationMessage(payload, this.integrationId);
     }
     return Promise.reject(new Error('PolarityUtils not available'));
   }
@@ -480,7 +481,7 @@ class DataminrIntegration {
       className += ' dm-jewel-theme';
     }
 
-    const overlay = window.PolarityUtils.getOverlayScrollbarState();
+    const overlay = this.utils.getOverlayScrollbarState();
     if (overlay) {
       className += ' overlay-scrollbars';
     }
@@ -1897,7 +1898,7 @@ class DataminrIntegration {
     // Sticky alerts enabled - initialize or use existing container
     if (!dataminrContainer) {
       // Create new container
-      this.currentUser = window.PolarityUtils.getCurrentUser();
+      this.currentUser = this.utils.getCurrentUser();
       await this.initPolarityPin();
 
       // Look up alert from URL parameter if present (fire and forget)
@@ -3196,10 +3197,6 @@ class DataminrIntegration {
 function initDataminr(integration, userConfig, userOptions) {
   if (!userConfig.subscribed) return;
 
-  if (!window.PolarityUtils) {
-    window.PolarityUtils = new PolarityUtils();
-  }
-
   const integrationName = htmlEscape(userConfig.name.replaceAll(' ', ''));
   if (!window[integrationName]) {
     window[integrationName] = new DataminrIntegration(
@@ -3208,13 +3205,13 @@ function initDataminr(integration, userConfig, userOptions) {
       userOptions
     );
     // Set up observer to re-init onSettingsChange
-    window.PolarityUtils.onSettingsChange((enterSettings) => {
+    window[integrationName].utils.onSettingsChange((enterSettings) => {
       if (!enterSettings) {
         window[integrationName].init();
       }
     }, integrationName);
     // Set up observer to re-size on scrollbar mode changes
-    window.PolarityUtils.trackScrollbarMode((overlay) => {
+    window[integrationName].utils.trackScrollbarMode((overlay) => {
       const applyScrollbarClass = () => {
         const dataminrContainer =
           window[integrationName].getDataminrContainerForIntegration();
@@ -3229,7 +3226,7 @@ function initDataminr(integration, userConfig, userOptions) {
     }, integrationName);
     // Watch the currentAlertIds map for changes
     window[integrationName].watchTrackedMap(
-      window.PolarityUtils.getNotificationList().map,
+      window[integrationName].utils.getNotificationList().map,
       ({ op, before, after }) => {
         if (op === 'set' && after > 0) {
           // Close the alert detail if it is open

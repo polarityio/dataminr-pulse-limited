@@ -1,6 +1,6 @@
 const { getLogger } = require('polarity-integration-utils').logging;
 const { requestWithDefaults } = require('../request');
-const { ROUTE_PREFIX } = require('../constants');
+const { ROUTE_PREFIX } = require('../../constants');
 const { setCachedLists } = require('./stateManager');
 
 /**

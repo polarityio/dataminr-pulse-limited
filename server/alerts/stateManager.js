@@ -1,5 +1,5 @@
 const NodeCache = require('node-cache');
-const { STATE_KEY, ALERTS_KEY, LISTS_KEY, CACHE_MAX_AGE_MS } = require('../constants');
+const { STATE_KEY, ALERTS_KEY, LISTS_KEY, CACHE_MAX_AGE_MS } = require('../../constants');
 
 // Cache for storing polling state
 // Key: 'pollingState', Value: { lastCursor, lastPollTime, alertCount }
