@@ -9,7 +9,22 @@ const {
 const { DateTime } = require('luxon');
 
 const NodeCache = require('node-cache');
-const tokenCache = new NodeCache();
+// Token cache: TTL handled by token expiration, disable automatic checks
+const tokenCache = new NodeCache({ checkperiod: 0 });
+
+// Rate limiter state - tracks API rate limit info from response headers
+const rateLimitState = {
+  limit: 6, // Default: 6 requests per window
+  remaining: 6, // Default: start with full quota
+  resetAt: null, // Timestamp when rate limit resets
+  windowMs: 30000 // Default: 30 second window
+};
+
+// Request queue for rate limiting
+const requestQueue = [];
+const MAX_QUEUE_SIZE = 12;
+const QUEUE_REQUEST_TIMEOUT_MS = 120000; // 2 minutes - requests older than this are dropped
+let isProcessingQueue = false;
 
 /**
  * Sleep for a specified number of milliseconds
@@ -21,28 +36,180 @@ const sleep = (ms) => {
 };
 
 /**
- * Extract retry delay from error response headers or use exponential backoff
- * @param {Object} error - The error object
- * @param {number} attemptNumber - Current retry attempt (0-indexed)
- * @returns {number} Delay in milliseconds
+ * Update rate limit state from response headers
+ * @param {Object} response - HTTP response object
+ * @returns {void}
  */
-const getRetryDelay = (error, attemptNumber) => {
-  // Check for Retry-After header (in seconds)
-  if (error.meta && error.meta.headers) {
-    const retryAfter = error.meta.headers['retry-after'] || error.meta.headers['Retry-After'];
-    if (retryAfter) {
-      const retryAfterSeconds = parseInt(retryAfter, 10);
-      if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0) {
-        // Convert to milliseconds and add a small buffer
-        return (retryAfterSeconds + 1) * 1000;
+const updateRateLimitFromHeaders = (response) => {
+  const Logger = getLogger();
+  const headers = response.headers || {};
+  
+  const limit = headers['x-ratelimit-limit'];
+  const remaining = headers['x-ratelimit-remaining'];
+  const reset = headers['x-ratelimit-reset'];
+  
+  if (limit !== undefined) {
+    rateLimitState.limit = parseInt(limit, 10);
+  }
+  
+  if (remaining !== undefined) {
+    rateLimitState.remaining = parseInt(remaining, 10);
+  }
+  
+  if (reset !== undefined) {
+    const resetMs = parseInt(reset, 10);
+    rateLimitState.resetAt = Date.now() + resetMs;
+  }
+  
+  Logger.trace(
+    {
+      limit: rateLimitState.limit,
+      remaining: rateLimitState.remaining,
+      resetAt: rateLimitState.resetAt,
+      resetIn: rateLimitState.resetAt ? rateLimitState.resetAt - Date.now() : null
+    },
+    'Updated rate limit state from response headers'
+  );
+};
+
+/**
+ * Process the request queue - executes queued requests one at a time
+ * @returns {Promise<void>}
+ */
+const processQueue = async () => {
+  const Logger = getLogger();
+  
+  if (isProcessingQueue || requestQueue.length === 0) {
+    return;
+  }
+  
+  isProcessingQueue = true;
+  
+  while (requestQueue.length > 0) {
+    const now = Date.now();
+    
+    // Remove expired requests from front of queue
+    while (requestQueue.length > 0 && requestQueue[0].expiresAt < now) {
+      const expiredRequest = requestQueue.shift();
+      Logger.warn(
+        { 
+          queueSize: requestQueue.length,
+          ageMs: now - (expiredRequest.expiresAt - QUEUE_REQUEST_TIMEOUT_MS)
+        },
+        'Dropping expired request from queue'
+      );
+      expiredRequest.reject(new Error('Request timed out in queue'));
+    }
+    
+    // Check if queue is now empty after removing expired requests
+    if (requestQueue.length === 0) {
+      break;
+    }
+    
+    // Check if rate limit has reset
+    if (rateLimitState.resetAt && now >= rateLimitState.resetAt) {
+      Logger.trace('Rate limit window has reset during queue processing');
+      rateLimitState.remaining = rateLimitState.limit;
+      rateLimitState.resetAt = null;
+    }
+    
+    // If we have quota remaining, process next request
+    if (rateLimitState.remaining > 0) {
+      const queuedRequest = requestQueue.shift();
+      
+      if (queuedRequest) {
+        Logger.debug(
+          { queueSize: requestQueue.length },
+          'Processing queued request'
+        );
+        
+        // Optimistically decrement quota
+        rateLimitState.remaining--;
+        
+        // Execute the request
+        queuedRequest.execute();
+      }
+    } else {
+      // No quota - wait until reset
+      if (rateLimitState.resetAt && rateLimitState.resetAt > now) {
+        const waitTime = rateLimitState.resetAt - now;
+        Logger.warn(
+          {
+            waitTimeMs: waitTime,
+            queueSize: requestQueue.length,
+            resetAt: new Date(rateLimitState.resetAt).toISOString()
+          },
+          'Rate limit exhausted - waiting to process queue'
+        );
+        await sleep(waitTime);
+        
+        // Reset quota after waiting
+        rateLimitState.remaining = rateLimitState.limit;
+        rateLimitState.resetAt = null;
+      } else {
+        // No reset time known, use default window
+        const waitTime = rateLimitState.windowMs;
+        Logger.warn(
+          {
+            waitTimeMs: waitTime,
+            queueSize: requestQueue.length
+          },
+          'Rate limit exhausted with no reset time - waiting to process queue'
+        );
+        await sleep(waitTime);
+        
+        // Reset quota after waiting
+        rateLimitState.remaining = rateLimitState.limit;
       }
     }
   }
+  
+  isProcessingQueue = false;
+};
 
-  // Exponential backoff: 2^attemptNumber seconds, with a max of 60 seconds
-  // Attempt 0: 1s, Attempt 1: 2s, Attempt 2: 4s, Attempt 3: 8s, etc.
-  const baseDelay = Math.min(Math.pow(2, attemptNumber), 60) * 1000;
-  return baseDelay;
+/**
+ * Queue a request to be executed when rate limit allows
+ * @param {Function} requestFn - The request function to execute
+ * @returns {Promise} Resolves with the request result or rejects if queue is full
+ */
+const queueRequest = async (requestFn) => {
+  const Logger = getLogger();
+  
+  // Check if queue is full
+  if (requestQueue.length >= MAX_QUEUE_SIZE) {
+    const error = new Error(`Request queue full (${MAX_QUEUE_SIZE} requests). Request dropped.`);
+    Logger.error(
+      { queueSize: requestQueue.length, maxQueueSize: MAX_QUEUE_SIZE },
+      'Request queue full - dropping request'
+    );
+    throw error;
+  }
+  
+  return new Promise((resolve, reject) => {
+    // Add request to queue with its resolve/reject handlers and expiration time
+    requestQueue.push({
+      expiresAt: Date.now() + QUEUE_REQUEST_TIMEOUT_MS,
+      execute: async () => {
+        try {
+          const result = await requestFn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      },
+      reject: reject // Store reject so we can call it for expired requests
+    });
+    
+    Logger.debug(
+      { queueSize: requestQueue.length, maxQueueSize: MAX_QUEUE_SIZE },
+      'Request queued'
+    );
+    
+    // Start processing queue if not already running
+    processQueue().catch((err) => {
+      Logger.error({ err }, 'Error processing request queue');
+    });
+  });
 };
 
 // Single request instance for all HTTP requests
@@ -167,87 +334,104 @@ const requestWithDefaults = async ({ route, options, maxRetries = 3, ...requestO
   let lastError;
   let attemptNumber = 0;
 
-  while (attemptNumber <= maxRetries) {
-    try {
-      const response = await request.run({
-        ...requestOptions,
-        url: `${options.url}/${route}`,
-        headers: {
-          'X-Application-Name': 'Polarity',
-          Authorization: `Bearer ${token}`,
-          ...(requestOptions.headers || {})
-        },
-        json: true
-      });
+  // Wrap the request execution in the queue
+  const executeRequest = async () => {
+    while (attemptNumber <= maxRetries) {
+      try {
+        const response = await request.run({
+          ...requestOptions,
+          url: `${options.url}/${route}`,
+          headers: {
+            'X-Application-Name': 'Polarity',
+            Authorization: `Bearer ${token}`,
+            ...(requestOptions.headers || {})
+          },
+          json: true
+        });
 
-      return response;
-    } catch (error) {
-      lastError = error;
+        // Update rate limit state from response headers
+        updateRateLimitFromHeaders(response);
 
-      // Check if it's a 401 authentication error
-      const errorStatus = error.status || error.statusCode || (error.meta && error.meta.statusCode);
-      const isUnauthorizedError =
-        (error instanceof ApiRequestError || error.name === 'ApiRequestError') &&
-        (errorStatus === '401' || errorStatus === 401);
+        return response;
+      } catch (error) {
+        lastError = error;
 
-      // If we get a 401 and haven't refreshed the token yet, try to get a new token and retry once
-      if (isUnauthorizedError && !tokenRefreshed) {
-        Logger.warn(
-          { route, errorStatus },
-          'Received 401 unauthorized error, attempting to refresh token'
-        );
+        // Update rate limit state from error response headers if available
+        if (error.meta && error.meta.headers) {
+          updateRateLimitFromHeaders({ headers: error.meta.headers });
+        }
 
-        try {
-          // Clear the cached token and get a new one
-          clearToken(options);
-          token = await getToken(options, true);
-          tokenRefreshed = true;
+        // Check if it's a 401 authentication error
+        const errorStatus = error.status || error.statusCode || (error.meta && error.meta.statusCode);
+        const isUnauthorizedError =
+          (error instanceof ApiRequestError || error.name === 'ApiRequestError') &&
+          (errorStatus === '401' || errorStatus === 401);
 
-          // Retry the request with the new token
+        // If we get a 401 and haven't refreshed the token yet, try to get a new token and retry once
+        if (isUnauthorizedError && !tokenRefreshed) {
+          Logger.warn(
+            { route, errorStatus },
+            'Received 401 unauthorized error, attempting to refresh token'
+          );
+
+          try {
+            // Clear the cached token and get a new one
+            clearToken(options);
+            token = await getToken(options, true);
+            tokenRefreshed = true;
+
+            // Retry the request with the new token
+            attemptNumber++;
+            continue;
+          } catch (tokenError) {
+            // If getting a new token fails (e.g., invalid credentials), throw immediately
+            // Don't retry as this indicates a configuration issue, not an expired token
+            Logger.error(
+              { route, tokenError },
+              'Failed to refresh token, credentials may be invalid'
+            );
+            throw tokenError;
+          }
+        }
+
+        // Check if it's a 429 rate limit error
+        const isRateLimitError =
+          (error instanceof ApiRequestError || error.name === 'ApiRequestError') &&
+          (errorStatus === '429' || errorStatus === 429 || String(error.message || error.detail || '').includes('429'));
+
+        if (isRateLimitError && attemptNumber < maxRetries) {
+          // Use x-ratelimit-reset from headers if available
+          const resetMs = error.meta?.headers?.['x-ratelimit-reset'];
+          const retryDelay = resetMs ? parseInt(resetMs, 10) : Math.min(Math.pow(2, attemptNumber), 60) * 1000;
+          
+          Logger.warn(
+            { route, attemptNumber: attemptNumber + 1, maxRetries, retryDelayMs: retryDelay },
+            'Rate limit (429) encountered, retrying request'
+          );
+
+          await sleep(retryDelay);
           attemptNumber++;
           continue;
-        } catch (tokenError) {
-          // If getting a new token fails (e.g., invalid credentials), throw immediately
-          // Don't retry as this indicates a configuration issue, not an expired token
-          Logger.error(
-            { route, tokenError },
-            'Failed to refresh token, credentials may be invalid'
-          );
-          throw tokenError;
         }
+
+        throw error;
       }
-
-      // Check if it's a 429 rate limit error
-      const isRateLimitError =
-        (error instanceof ApiRequestError || error.name === 'ApiRequestError') &&
-        (errorStatus === '429' || errorStatus === 429 || String(error.message || error.detail || '').includes('429'));
-
-      if (isRateLimitError && attemptNumber < maxRetries) {
-        const retryDelay = getRetryDelay(error, attemptNumber);
-        Logger.warn(
-          { route, attemptNumber: attemptNumber + 1, maxRetries, retryDelayMs: retryDelay },
-          'Rate limit (429) encountered, retrying request'
-        );
-
-        await sleep(retryDelay);
-        attemptNumber++;
-        continue;
-      }
-
-      throw error;
     }
-  }
 
-  // If we've exhausted all retries, throw the last error
-  Logger.error(
-    {
-      route,
-      maxRetries,
-      finalAttempt: attemptNumber
-    },
-    'Max retries exceeded for rate-limited request'
-  );
-  throw lastError;
+    // If we've exhausted all retries, throw the last error
+    Logger.error(
+      {
+        route,
+        maxRetries,
+        finalAttempt: attemptNumber
+      },
+      'Max retries exceeded for rate-limited request'
+    );
+    throw lastError;
+  };
+
+  // Queue the request - it will be executed when rate limit allows
+  return await queueRequest(executeRequest);
 };
 
 /**

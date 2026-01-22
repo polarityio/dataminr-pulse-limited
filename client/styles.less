@@ -33,6 +33,8 @@
 @color-gradient-regenai-start: #007061;
 @color-border-intel-agents: #069381;
 @color-link-icon: #33b2ff;
+@color-error: #f57370;
+@color-text-error: #f68685;
 
 /* ============================================
    Global Styles
@@ -316,6 +318,40 @@ img {
   &:focus,
   &:focus-visible {
     outline: 1px solid @color-text-secondary;
+  }
+}
+
+#dataminr-polling-error {
+  position: absolute;
+  font-weight: 600;
+  right: 40px;
+}
+
+.dataminr-restart-polling-btn {
+  background-color: transparent;
+  border: 1px solid @color-error;
+  border-radius: 4px;
+  background-color: @color-bg-alert;
+  color: @color-error;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 300;
+  padding: 0px 5px;
+  transition: all 0.2s ease;
+  margin-left: 8px;
+
+  &:hover {
+    background-color: transparent;
+  }
+
+  &:active {
+    background-color: @color-bg-alert;
+    transform: scale(0.98);
+  }
+
+  &:focus,
+  &:focus-visible {
+    outline: 1px solid @color-error;
   }
 }
 
@@ -1562,7 +1598,7 @@ img {
 .dataminr-media-fallback-message {
   text-align: center;
   color: @color-text-secondary;
-  
+
   p {
     margin: 0 0 12px 0;
     font-size: 14px;
@@ -1580,17 +1616,17 @@ img {
   border: 1px solid @color-primary;
   border-radius: 4px;
   transition: background-color 0.2s ease, color 0.2s ease;
-  
+
   &:hover {
     background-color: @color-primary;
     color: @color-text-black;
   }
-  
+
   &:focus {
     outline: 2px solid @color-primary;
     outline-offset: 2px;
   }
-  
+
   svg {
     display: inline-block;
     vertical-align: middle;
@@ -1613,7 +1649,7 @@ img {
 .dataminr-video-fallback-message {
   text-align: center;
   color: @color-text-secondary;
-  
+
   p {
     margin: 0 0 12px 0;
     font-size: 14px;
@@ -1631,17 +1667,17 @@ img {
   border: 1px solid @color-primary;
   border-radius: 4px;
   transition: background-color 0.2s ease, color 0.2s ease;
-  
+
   &:hover {
     background-color: @color-primary;
     color: @color-text-black;
   }
-  
+
   &:focus {
     outline: 2px solid @color-primary;
     outline-offset: 2px;
   }
-  
+
   svg {
     display: inline-block;
     vertical-align: middle;
@@ -1750,7 +1786,6 @@ img {
   object-fit: contain;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
-
 
 /* ============================================
    Linked Alerts Timeline Styles
@@ -1870,7 +1905,7 @@ img {
 .dataminr-trial-search,
 .dataminr-trial-alert {
   text-align: center;
-  
+
   svg {
     color: @color-primary;
   }

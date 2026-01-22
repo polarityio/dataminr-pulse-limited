@@ -4,6 +4,7 @@ module.exports = {
   DEFAULT_PAGE_SIZE: 40, // Default page size for alerts
   STATE_KEY: 'pollingState',
   ALERTS_KEY: 'alerts',
+  ALERTS_MAP_KEY: 'alertsMap',
   LISTS_KEY: 'lists',
   ROUTE_PREFIX: 'pulse',
   DEFAULT_ALERT_TYPES_TO_WATCH: ['flash', 'urgent'],

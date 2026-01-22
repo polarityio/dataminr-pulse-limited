@@ -8,6 +8,8 @@ const { getPollingState, updatePollingState } = require('./stateManager');
 const { processAlerts } = require('./alertProcessor');
 const { DEFAULT_PAGE_SIZE } = require('../../constants');
 
+let isPollingAlertsInProgress = false;
+
 /**
  * Sleep for a specified number of milliseconds
  * @param {number} ms - Milliseconds to sleep
@@ -32,6 +34,8 @@ const sleep = (ms) => {
  */
 const pollAlerts = async (options) => {
   const Logger = getLogger();
+  if (isPollingAlertsInProgress) return;
+  isPollingAlertsInProgress = true;
 
   // Initialize variables at function scope to ensure they're always defined in catch block
   let totalAlertsProcessed = 0;
@@ -146,6 +150,7 @@ const pollAlerts = async (options) => {
       },
       'Polling cycle completed'
     );
+    isPollingAlertsInProgress = false;
 
     return {
       success: true,
@@ -153,6 +158,7 @@ const pollAlerts = async (options) => {
       hasMore: hasMore
     };
   } catch (error) {
+    isPollingAlertsInProgress = false;
     // Handle rate limiting (429) with a cleaner message
     const statusCode = error.statusCode || (error.meta && error.meta.statusCode);
     if (statusCode === 429) {

@@ -16,7 +16,8 @@ const {
 const {
   getCachedAlerts,
   getLatestAlertTimestamp,
-  getCachedLists
+  getCachedLists,
+  addAlertsToCache
 } = require('./server/alerts/stateManager');
 const { getAlerts } = require('./server/alerts/getAlerts');
 const { setLogger: setRequestLogger } = require('./server/request');
@@ -36,6 +37,9 @@ let Logger = null;
 let alertPollingInterval = null;
 let listsPollingInterval = null;
 let pollingInitialized = false;
+
+// Cache for alert type filters (per user configuration)
+const alertTypeFilterCache = new Map();
 
 /**
  * Initialize polling for alerts
@@ -97,6 +101,23 @@ const doLookup = async (entities, options, cb) => {
 
     const searchableEntities = removePrivateIps(entities);
     const alerts = await searchAlerts(searchableEntities, options);
+
+    // Cache all alerts from search results for future lookups
+    const allAlerts = [];
+    if (alerts && Array.isArray(alerts)) {
+      alerts.forEach((alertResult) => {
+        if (alertResult && alertResult.result && Array.isArray(alertResult.result)) {
+          allAlerts.push(...alertResult.result);
+        }
+      });
+      if (allAlerts.length > 0) {
+        addAlertsToCache(allAlerts);
+        Logger.debug(
+          { alertCount: allAlerts.length },
+          'Cached alerts from search results'
+        );
+      }
+    }
 
     Logger.trace({ alerts, searchableEntities });
 
@@ -184,11 +205,21 @@ const shutdown = () => {
  * @returns {Function} Filter function that returns true if alert should be included
  */
 const createAlertTypeFilter = (options) => {
-  // Get configured alert types to watch (default to all if not configured)
+  // Create cache key from alert types configuration
   const alertTypesToWatch =
     options.setAlertTypesToWatch && options.setAlertTypesToWatch.length > 0
       ? options.setAlertTypesToWatch
       : DEFAULT_ALERT_TYPES_TO_WATCH;
+  
+  // Create stable cache key (JSON string of sorted array)
+  const cacheKey = JSON.stringify(
+    alertTypesToWatch.map(t => (t && typeof t === 'object' && t.value) ? t.value : t).sort()
+  );
+  
+  // Return cached filter if exists
+  if (alertTypeFilterCache.has(cacheKey)) {
+    return alertTypeFilterCache.get(cacheKey);
+  }
 
   // Normalize to lowercase for comparison
   // Handle both string arrays and object arrays with {value, display} structure
@@ -202,18 +233,26 @@ const createAlertTypeFilter = (options) => {
     // Otherwise treat as string
     return typeof type === 'string' ? type.toLowerCase() : String(type).toLowerCase();
   });
+  
+  // Convert to Set for O(1) lookup
+  const alertTypesSet = new Set(normalizedAlertTypesToWatch);
 
   // Return filter function that checks if alert type should be included
-  return (alert) => {
-    if (!normalizedAlertTypesToWatch || normalizedAlertTypesToWatch.length === 0) {
+  const filterFn = (alert) => {
+    if (alertTypesSet.size === 0) {
       return true; // Include all if no filter configured
     }
     const alertTypeName =
       alert.alertType && alert.alertType.name
         ? alert.alertType.name.toLowerCase()
         : 'alert';
-    return normalizedAlertTypesToWatch.indexOf(alertTypeName) !== -1;
+    return alertTypesSet.has(alertTypeName);
   };
+  
+  // Cache the filter function
+  alertTypeFilterCache.set(cacheKey, filterFn);
+  
+  return filterFn;
 };
 
 /**
@@ -276,6 +315,15 @@ const onMessage = async (payload, options, cb) => {
                 pageSize: alertCount
               });
 
+              // Cache the fetched alerts for future lookups
+              if (apiAlerts && apiAlerts.length > 0) {
+                addAlertsToCache(apiAlerts);
+                Logger.debug(
+                  { alertCount: apiAlerts.length },
+                  'Cached alerts from alertCount query'
+                );
+              }
+
               // Filter API alerts by alert type
               // Note: Since we currently filter by alert type after getAlerts, we could have less than the requested count
               alerts = apiAlerts.filter(alertTypeFilter);
@@ -328,9 +376,11 @@ const onMessage = async (payload, options, cb) => {
         getAlertById(requestedAlertId, optionsWithListIds)
           .then((alert) => {
             if (alert) {
+              // Cache the fetched alert for future lookups
+              addAlertsToCache([alert]);
               Logger.debug(
                 { alertId: requestedAlertId },
-                'Retrieved alert by ID from API'
+                'Retrieved and cached alert by ID from API'
               );
               cb(null, { alert });
             } else {
@@ -353,20 +403,26 @@ const onMessage = async (payload, options, cb) => {
 
       case 'renderAlertDetail':
         // Render alert detail HTML using handlebars template
-        const { alert: alertToRender, timezone: payloadTimezone } = payload;
-        if (!alertToRender) {
-          return cb({ detail: 'Missing alert in payload' });
+        // Fetch alert from backend cache (or API if not cached) and render
+        const { alertId: renderAlertId, timezone: renderTimezone } = payload;
+        if (!renderAlertId) {
+          return cb({ detail: 'Missing alertId in payload' });
         }
+        const renderOptionsWithListIds = { ...options, listIds: listIds };
+        const renderOptionsWithTimezone = renderTimezone
+          ? Object.assign({}, renderOptionsWithListIds, { timezone: renderTimezone })
+          : renderOptionsWithListIds;
 
-        // Merge timezone from payload into options if provided
-        const optionsWithTimezone = payloadTimezone
-          ? Object.assign({}, options, { timezone: payloadTimezone })
-          : options;
+        getAlertById(renderAlertId, renderOptionsWithListIds)
+          .then(async (alert) => {
+            if (!alert) {
+              Logger.warn({ alertId: renderAlertId }, 'Alert not found when rendering detail');
+              return cb(null, { html: '' });
+            }
 
-        renderAlertDetail(alertToRender, optionsWithTimezone)
-          .then((renderedHtml) => {
+            const renderedHtml = await renderAlertDetail(alert, renderOptionsWithTimezone);
             Logger.debug(
-              { alertId: alertToRender.alertId },
+              { alertId: renderAlertId },
               'Rendered alert detail template'
             );
             cb(null, { html: renderedHtml });
@@ -374,7 +430,7 @@ const onMessage = async (payload, options, cb) => {
           .catch((error) => {
             const err = parseErrorToReadableJson(error);
             Logger.error(
-              { error, formattedError: err, alertId: alertToRender.alertId },
+              { error, formattedError: err, alertId: renderAlertId },
               'Failed to render alert detail template'
             );
             cb({

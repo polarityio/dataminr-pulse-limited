@@ -434,10 +434,9 @@ class DataminrIntegration {
     this.userOptions = userOptions;
     this.pollingInterval = null;
     this.pollIntervalMs = 10000; // Poll Polarity server every 10 seconds
+    this.isPollingInProgress = false;
     this.currentUser = null;
-    this.currentAlertCache = new Map(); // Map of alertId -> full alert object (# macCacheSize)
     this.currentAlertIds = new Map(); // Map of alertId -> { id, headline, type, alertTimestamp }
-    this.maxCacheSize = 100;
     this.lastAlertTimestamp = null; // ISO timestamp of last alert
     this.maxVisibleTags = 10; // Maximum number of visible alert tags to display
     this.currentFilter = null; // Current alert type filter: null (all), 'Flash', 'Urgent', or 'Alert'
@@ -574,6 +573,17 @@ class DataminrIntegration {
         clearAllButton.addEventListener('click', (e) => {
           e.stopPropagation(); // Prevent header toggle
           this.clearAllAlerts();
+        });
+      }
+
+      // Add click handler for restart polling button
+      const restartPollingButton = dataminrContainer.querySelector(
+        '.dataminr-restart-polling-btn'
+      );
+      if (restartPollingButton) {
+        restartPollingButton.addEventListener('click', (e) => {
+          e.stopPropagation(); // Prevent header toggle
+          this.restartPolling();
         });
       }
 
@@ -752,6 +762,8 @@ class DataminrIntegration {
    * @private
    */
   async pollAlerts() {
+    if (this.isPollingInProgress) return;
+    this.isPollingInProgress = true;
     try {
       // Fetch new alerts since last query timestamp
       const newAlerts = await this.getAlerts();
@@ -767,7 +779,21 @@ class DataminrIntegration {
       }
     } catch (error) {
       console.error('Error polling alerts:', error);
+
+      // Check if error is a 404 - integration has stopped
+      // Handle different error formats: error.status, error.response.status, or error.statusCode
+      const statusCode =
+        error.status ||
+        (error.response && error.response.status) ||
+        error.statusCode ||
+        (error.detail && error.detail.status);
+      if (statusCode === 404) {
+        // Stop polling and show error message
+        this.stopPolling();
+        this.showPollingError();
+      }
     }
+    this.isPollingInProgress = false;
   }
 
   /**
@@ -816,7 +842,8 @@ class DataminrIntegration {
       return [];
     } catch (error) {
       console.error('Error getting alerts:', error);
-      return [];
+      // Re-throw error so pollAlerts can handle 404s
+      throw error;
     }
   }
 
@@ -826,9 +853,6 @@ class DataminrIntegration {
    */
   clearAllAlerts() {
     // Clear the alerts maps
-    if (this.currentAlertCache) {
-      this.currentAlertCache.clear();
-    }
     if (this.currentAlertIds) {
       this.currentAlertIds.clear();
     }
@@ -910,24 +934,6 @@ class DataminrIntegration {
 
       // If detail container doesn't exist, create it dynamically
       if (!detailContainer) {
-        let alert = this.currentAlertCache.get(alertId);
-
-        // If not in cache, fetch full alert data
-        if (!alert) {
-          try {
-            alert = await this.getAlertById(alertId);
-            if (alert) {
-              this.processNewAlert(alert);
-            }
-          } catch (e) {
-            console.error('Error fetching alert details:', e);
-          }
-        }
-
-        if (!alert) {
-          return;
-        }
-
         // Get or create the details container
         const dataminrDetailsContainer = this.getDataminrDetailsContainerForIntegration();
 
@@ -940,13 +946,32 @@ class DataminrIntegration {
           dataminrDetailsContainer.appendChild(detailsContainer);
         }
 
-        // Create and add the detail element
+        // Create and add the detail element with loading state
         detailContainer = document.createElement('div');
         detailContainer.className = 'dataminr-alert-detail';
         detailContainer.setAttribute('data-alert-id', alertId);
+        detailContainer.innerHTML = '<div style="padding: 20px; text-align: center;">Loading alert details...</div>';
+        detailsContainer.appendChild(detailContainer);
 
-        // Build detail HTML (async)
-        const detailHtml = await this.buildAlertDetailHtml(alert);
+        // Show it immediately in loading state
+        this.hideAllDetails();
+        detailContainer.style.display = 'block';
+        detailContainer.classList.add('visible');
+
+        // Scroll notification overlay to top when alert is selected
+        const notificationContainer = byId('notification-overlay-scroll-container');
+        if (notificationContainer) {
+          notificationContainer.scrollTop = 0;
+        }
+
+        // Build detail HTML asynchronously (backend will fetch alert from its cache)
+        const detailHtml = await this.buildAlertDetailHtml(alertId);
+
+        // If no HTML returned, alert might not exist
+        if (!detailHtml) {
+          detailContainer.innerHTML = '<div style="padding: 20px; text-align: center;">Alert not found</div>';
+          return;
+        }
 
         // Extract only the dataminr-alert-detail-content element to avoid extra containers from block.hbs
         const tempDiv = document.createElement('div');
@@ -955,7 +980,6 @@ class DataminrIntegration {
         detailContainer.innerHTML = contentElement
           ? contentElement.innerHTML
           : detailHtml;
-        detailsContainer.appendChild(detailContainer);
 
         // Add click handler for close icon
         const closeIcon = detailContainer.querySelector('.dataminr-alert-close-icon');
@@ -968,20 +992,9 @@ class DataminrIntegration {
             }
           });
         }
-      }
-
-      if (detailContainer) {
-        // Hide entity details for all other alert details before showing this one
-        const dataminrDetailsContainer = this.getDataminrDetailsContainerForIntegration();
-        if (dataminrDetailsContainer) {
-          const allAlertDetails = qsa('.dataminr-alert-detail', dataminrDetailsContainer);
-          allAlertDetails.forEach((alertDetail) => {
-            if (alertDetail !== detailContainer) {
-              this.hideEntityDetails(alertDetail);
-            }
-          });
-        }
-
+      } else {
+        // Container already exists, just show it
+        this.hideAllDetails();
         detailContainer.style.display = 'block';
         detailContainer.classList.add('visible');
 
@@ -1034,7 +1047,6 @@ class DataminrIntegration {
     }
 
     this.deactivateAllTagButtons();
-    this.hideAllDetails();
     button.classList.add('active');
     this.showDetail(alertId);
   }
@@ -1095,9 +1107,7 @@ class DataminrIntegration {
               <span id="dataminr-remaining-count" class="dataminr-tag-headline">+${remainingCount}</span>
             </div>
           `;
-          newRemainingButton.addEventListener('click', () => {
-            this.updateAlertsDisplay(Array.from(this.currentAlertIds.values()), true);
-          });
+          // Note: Click handler managed by setupAlertTagDelegation() - no individual listener needed
           alertsList.appendChild(newRemainingButton);
         }
       }
@@ -1150,12 +1160,7 @@ class DataminrIntegration {
       alertsListContainer.appendChild(tagButton);
     }
 
-    // Add click handler for the tag button
-    tagButton.addEventListener('click', () => {
-      this.handleAlertTagClick(alertId, tagButton);
-    });
-
-    // Note: Detail containers are built dynamically when shown via showDetail()
+    // Note: Click handler managed by setupAlertTagDelegation() - no individual listener needed
   }
 
   /**
@@ -1171,9 +1176,6 @@ class DataminrIntegration {
 
     try {
       // Remove alert from current alerts maps
-      if (this.currentAlertCache) {
-        this.currentAlertCache.delete(alertId);
-      }
       if (this.currentAlertIds) {
         this.currentAlertIds.delete(alertId);
       }
@@ -1411,20 +1413,20 @@ class DataminrIntegration {
   /**
    * Build HTML for alert detail container using backend template
    * @private
-   * @param {Object} alert - Alert object
+   * @param {string} alertId - Alert ID
    * @returns {Promise<string>} HTML string for alert details
    */
-  async buildAlertDetailHtml(alert) {
-    if (!alert) return '';
+  async buildAlertDetailHtml(alertId) {
+    if (!alertId) return '';
 
     try {
       // Get browser timezone
       const timezone = this.getBrowserTimezone();
 
-      // Request rendered HTML from backend
+      // Request rendered HTML from backend (backend will fetch alert from its cache)
       const payload = {
         action: 'renderAlertDetail',
-        alert: alert
+        alertId: alertId
       };
 
       // Add timezone to payload if available
@@ -1579,64 +1581,7 @@ class DataminrIntegration {
         });
       }
 
-      // Add click handlers for alert tag buttons to toggle active state and show details
-      const alertTagButtons = qsa('.dataminr-tag', integrationContainer);
-      alertTagButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-          const alertId = button.getAttribute('data-alert-id');
-
-          // Check if button is already active - if so, just toggle it off (no need to load all alerts)
-          const isActive = button.classList.contains('active');
-          if (isActive) {
-            this.handleAlertTagClick(alertId, button);
-            return;
-          }
-
-          // Load all alerts first, then handle the click
-          // Store alertId since updateAlertsDisplay will rebuild the UI and button reference will be stale
-          const clickedAlertId = alertId;
-          this.updateAlertsDisplay(Array.from(this.currentAlertIds.values()), true).then(
-            () => {
-              // Handle remaining button click - just show all alerts, no need to activate
-              if (clickedAlertId === 'remaining') {
-                return;
-              }
-
-              // For regular tag clicks, find and activate the clicked tag
-              const integrationContainer = this.getIntegrationContainer();
-              if (!integrationContainer) return;
-              const allTagButtons = qsa(
-                '.dataminr-tag[data-alert-id]',
-                integrationContainer
-              );
-              let tagButton = null;
-              for (let i = 0; i < allTagButtons.length; i++) {
-                const btn = allTagButtons[i];
-                if (btn.getAttribute('data-alert-id') === clickedAlertId) {
-                  tagButton = btn;
-                  break;
-                }
-              }
-
-              if (tagButton) {
-                this.handleAlertTagClick(clickedAlertId, tagButton);
-              }
-            }
-          );
-        });
-      });
-
-      // Add click handlers for close icons to mark single alert as read
-      const closeIcons = qsa('.dataminr-alert-close-icon', integrationContainer);
-      closeIcons.forEach((closeIcon) => {
-        closeIcon.addEventListener('click', (e) => {
-          e.stopPropagation(); // Prevent triggering tag button click
-          const alertId = closeIcon.getAttribute('data-alert-id');
-          if (alertId) {
-            this.markAlertAsRead(alertId);
-          }
-        });
-      });
+      // Note: Click handlers are managed by setupAlertTagDelegation() - no individual listeners needed
     } else {
       // Container exists, check if we need to add more alerts
       const visibleTagButtons = qsa(
@@ -1680,10 +1625,9 @@ class DataminrIntegration {
    * Load and display alerts
    * @private
    */
-  async loadAlerts() {
+  async loadAlerts(count) {
     // Check for count parameter in URL (for initial query)
-    const countParam = this.getUrlParameter('alertCount');
-    const count = countParam ? parseInt(countParam, 10) : null;
+    if (!count) return;
     const newAlerts = await this.getAlerts(count);
 
     // Merge new alerts into currentAlerts Map
@@ -1791,7 +1735,6 @@ class DataminrIntegration {
             tagButton.classList.add('active');
           }
 
-          this.hideAllDetails();
           this.showDetail(alertId);
         }, 100);
       } else {
@@ -1808,18 +1751,18 @@ class DataminrIntegration {
    */
   startPolling() {
     // Poll immediately
-    this.pollAlerts();
-    this.loadAlerts();
+    const countParam = this.getUrlParameter('alertCount');
+    const count = countParam ? parseInt(countParam, 10) : null;
+    if (count) {
+      this.loadAlerts(count);
+    } else {
+      this.pollAlerts();
+    }
 
     // Set up polling interval
     this.pollingInterval = setInterval(() => {
       this.pollAlerts();
     }, this.pollIntervalMs);
-
-    // Also reload full alerts every 30 seconds
-    setInterval(() => {
-      this.loadAlerts();
-    }, 30000);
   }
 
   /**
@@ -1831,6 +1774,40 @@ class DataminrIntegration {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
     }
+  }
+
+  /**
+   * Show polling error message
+   * @private
+   */
+  showPollingError() {
+    const errorElement = byId('dataminr-polling-error');
+    if (errorElement) {
+      errorElement.style.display = 'inline';
+    }
+  }
+
+  /**
+   * Hide polling error message
+   * @private
+   */
+  hidePollingError() {
+    const errorElement = byId('dataminr-polling-error');
+    if (errorElement) {
+      errorElement.style.display = 'none';
+    }
+  }
+
+  /**
+   * Restart polling for alerts
+   * @private
+   */
+  restartPolling() {
+    // Hide error message
+    this.hidePollingError();
+
+    // Restart polling
+    this.startPolling();
   }
 
   /**
@@ -1909,8 +1886,12 @@ class DataminrIntegration {
 
     // Common initialization for both new and existing containers
     this.updateAlertCount(0);
+    this.setupAlertTagDelegation();
     this.setupCopyButtonDelegation();
     this.setupMediaErrorHandling();
+
+    // Stop any existing polling before starting new one
+    this.stopPolling();
 
     // Start polling after a short delay to ensure UI is ready
     setTimeout(() => {
@@ -2255,9 +2236,13 @@ class DataminrIntegration {
       '#dataminr-entity-details-scores-section'
     );
     const cvssItem = detailsContainer.querySelector('#dataminr-entity-details-cvss-item');
-    const cvssValue = detailsContainer.querySelector('#dataminr-entity-details-cvss-value');
+    const cvssValue = detailsContainer.querySelector(
+      '#dataminr-entity-details-cvss-value'
+    );
     const epssItem = detailsContainer.querySelector('#dataminr-entity-details-epss-item');
-    const epssValue = detailsContainer.querySelector('#dataminr-entity-details-epss-value');
+    const epssValue = detailsContainer.querySelector(
+      '#dataminr-entity-details-epss-value'
+    );
     const exploitableItem = detailsContainer.querySelector(
       '#dataminr-entity-details-exploitable-item'
     );
@@ -2954,10 +2939,59 @@ class DataminrIntegration {
   }
 
   /**
+   * Setup event delegation for alert tag button clicks
+   * @private
+   */
+  setupAlertTagDelegation() {
+    // Check if handler already attached to prevent duplicates
+    if (this._alertTagHandlerAttached) {
+      return;
+    }
+    this._alertTagHandlerAttached = true;
+
+    // Use event delegation to handle all alert tag clicks (no individual listeners needed)
+    document.body.addEventListener('click', (e) => {
+      const tagButton = e.target.closest('.dataminr-tag');
+      if (!tagButton) {
+        return;
+      }
+
+      const alertId = tagButton.getAttribute('data-alert-id');
+      if (!alertId) {
+        return;
+      }
+
+      // Check if button is already active - if so, just toggle it off
+      const isActive = tagButton.classList.contains('active');
+      if (isActive) {
+        this.handleAlertTagClick(alertId, tagButton);
+        return;
+      }
+
+      // Handle remaining button - show all alerts
+      if (alertId === 'remaining') {
+        this.updateAlertsDisplay(Array.from(this.currentAlertIds.values()), true);
+        return;
+      }
+
+      // For regular alert tags - just show the detail immediately (no need to rebuild)
+      this.deactivateAllTagButtons();
+      tagButton.classList.add('active');
+      this.showDetail(alertId);
+    });
+  }
+
+  /**
    * Set up event delegation for copy buttons and image modals
    * @private
    */
   setupCopyButtonDelegation() {
+    // Check if handler already attached to prevent duplicates
+    if (this._copyButtonHandlerAttached) {
+      return;
+    }
+    this._copyButtonHandlerAttached = true;
+
     // Use event delegation on document body to handle dynamically created buttons
     document.body.addEventListener('click', (e) => {
       // Handle live brief copy button
@@ -3072,13 +3106,14 @@ class DataminrIntegration {
             console.error('Failed to parse entity JSON data:', err);
           }
         }
-        
+
         // Fallback to individual data attributes if JSON not available
         if (!entityData) {
           const entityName = entityTrigger.getAttribute('data-entity-name') || '';
           const entityType = entityTrigger.getAttribute('data-entity-type') || '';
           const entitySummary = entityTrigger.getAttribute('data-entity-summary') || '';
-          const entityAliasesStr = entityTrigger.getAttribute('data-entity-aliases') || '';
+          const entityAliasesStr =
+            entityTrigger.getAttribute('data-entity-aliases') || '';
           const entityUrl = entityTrigger.getAttribute('data-entity-url') || '';
 
           // Parse aliases from comma-separated string
@@ -3130,24 +3165,8 @@ class DataminrIntegration {
         e.stopPropagation();
         const linkedAlertId = linkedAlertItem.getAttribute('data-linked-alert-id');
         if (linkedAlertId) {
-          // Get the alert from currentAlertCache or fetch it
-          const linkedAlert = this.currentAlertCache.get(linkedAlertId);
-          if (linkedAlert) {
-            // Alert already in cache, show it
-            this.hideAllDetails();
-            this.showDetail(linkedAlertId);
-          } else {
-            // Fetch the alert and then show it
-            this.getAlertById(linkedAlertId).then((alert) => {
-              if (alert) {
-                // Store alert in maps
-                this.processNewAlert(alert);
-                // Show the detail
-                this.hideAllDetails();
-                this.showDetail(linkedAlertId);
-              }
-            });
-          }
+          // Show the detail (backend will fetch from its cache)
+          this.showDetail(linkedAlertId);
         }
         return;
       }
@@ -3164,18 +3183,6 @@ class DataminrIntegration {
 
     const alertId = alert.alertId;
     if (!alertId) return;
-
-    // Keeping older alerts from poll (top of notifications)
-    if (!poll || this.currentAlertCache.size < this.maxCacheSize) {
-      // Add to full alert cache
-      this.currentAlertCache.set(alertId, alert);
-
-      // Enforce cache limit (remove oldest if > maxCacheSize)
-      if (this.currentAlertCache.size > this.maxCacheSize) {
-        const firstKey = this.currentAlertCache.keys().next().value;
-        this.currentAlertCache.delete(firstKey);
-      }
-    }
 
     // Add to lightweight IDs map
     this.currentAlertIds.set(alertId, {

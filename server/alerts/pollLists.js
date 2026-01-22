@@ -3,6 +3,8 @@ const { requestWithDefaults } = require('../request');
 const { ROUTE_PREFIX } = require('../../constants');
 const { setCachedLists } = require('./stateManager');
 
+let isPollingListsInProgress = false;
+
 /**
  * Get lists from Dataminr API
  * @param {Object} options - Configuration options
@@ -10,6 +12,8 @@ const { setCachedLists } = require('./stateManager');
  */
 const pollLists = async (options) => {
   const Logger = getLogger();
+  if (isPollingListsInProgress) return;
+  isPollingListsInProgress = true;
 
   try {
     Logger.debug('Fetching lists from Dataminr API');
@@ -48,8 +52,10 @@ const pollLists = async (options) => {
       Logger.debug('Lists saved to cache');
     }
 
+    isPollingListsInProgress = false;
     return formattedLists;
   } catch (error) {
+    isPollingListsInProgress = false;
     Logger.error(
       { error },
       'Failed to fetch lists from Dataminr API, returning empty array'
