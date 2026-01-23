@@ -1,25 +1,12 @@
-const NodeCache = require('node-cache');
 const { STATE_KEY, ALERTS_KEY, LISTS_KEY, ALERTS_MAP_KEY, CACHE_MAX_AGE_MS } = require('../../constants');
 
-// Cache for storing polling state
-// Key: 'pollingState', Value: { lastCursor, lastPollTime, alertCount }
-// checkperiod: 0 disables automatic expiry checks (we handle expiry manually)
-const stateCache = new NodeCache({ stdTTL: 0, checkperiod: 0 });
-
-// Global cache for storing all polled alerts (sorted by timestamp, newest first)
-// Key: 'alerts', Value: Array of alert objects
-// checkperiod: 0 disables automatic expiry checks (we handle expiry manually)
-const alertsCache = new NodeCache({ stdTTL: 0, checkperiod: 0 });
-
-// Map for O(1) alert lookups by alertId
-// Key: 'alertsMap', Value: Map of alertId -> alert object
-// checkperiod: 0 disables automatic expiry checks (we handle expiry manually)
-const alertsMapCache = new NodeCache({ stdTTL: 0, checkperiod: 0 });
-
-// Global cache for storing lists
-// Key: 'lists', Value: Array of list objects with value and display properties
-// checkperiod: 0 disables automatic expiry checks (we handle expiry manually)
-const listsCache = new NodeCache({ stdTTL: 0, checkperiod: 0 });
+// Native in-memory cache stores
+const cache = {
+  [STATE_KEY]: null,
+  [ALERTS_KEY]: [],
+  [LISTS_KEY]: [],
+  [ALERTS_MAP_KEY]: new Map()
+};
 
 /**
  * Get the current polling state
@@ -31,7 +18,7 @@ const listsCache = new NodeCache({ stdTTL: 0, checkperiod: 0 });
  */
 const getPollingState = () => {
   return (
-    stateCache.get(STATE_KEY) || {
+    cache[STATE_KEY] || {
       lastCursor: null,
       lastPollTime: null,
       alertCount: 0,
@@ -55,7 +42,7 @@ const updatePollingState = (updates) => {
     ...currentState,
     ...updates
   };
-  stateCache.set(STATE_KEY, newState);
+  cache[STATE_KEY] = newState;
   return newState;
 };
 
@@ -64,7 +51,7 @@ const updatePollingState = (updates) => {
  * @returns {void}
  */
 const resetPollingState = () => {
-  stateCache.del(STATE_KEY);
+  cache[STATE_KEY] = null;
 };
 
 /**
@@ -111,7 +98,7 @@ const filterAlertsByAge = (alerts, alertFilterTimestamp = null) => {
  * @returns {Array<Object>} Array of alert objects (sorted newest first)
  */
 const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
-  const alerts = alertsCache.get(ALERTS_KEY) || [];
+  const alerts = cache[ALERTS_KEY] || [];
   
   // Early return if no alerts
   if (alerts.length === 0) {
@@ -136,7 +123,7 @@ const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
         return alertTime > cutoffTime;
       });
       // Update cache with filtered list (cleanup)
-      alertsCache.set(ALERTS_KEY, filteredAlerts);
+      cache[ALERTS_KEY] = filteredAlerts;
     }
   }
   
@@ -196,11 +183,11 @@ const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
  */
 const addAlertsToCache = (alerts) => {
   if (!alerts || alerts.length === 0) {
-    return { added: 0, total: alertsCache.get(ALERTS_KEY)?.length || 0 };
+    return { added: 0, total: cache[ALERTS_KEY]?.length || 0 };
   }
 
-  const existingAlerts = alertsCache.get(ALERTS_KEY) || [];
-  const existingMap = alertsMapCache.get(ALERTS_MAP_KEY) || new Map();
+  const existingAlerts = cache[ALERTS_KEY] || [];
+  const existingMap = cache[ALERTS_MAP_KEY] || new Map();
   
   // Filter out duplicates from incoming alerts using existing map
   const now = Date.now();
@@ -280,8 +267,8 @@ const addAlertsToCache = (alerts) => {
   }
   
   // Update caches
-  alertsCache.set(ALERTS_KEY, filteredAlerts);
-  alertsMapCache.set(ALERTS_MAP_KEY, existingMap);
+  cache[ALERTS_KEY] = filteredAlerts;
+  cache[ALERTS_MAP_KEY] = existingMap;
 
   return {
     added: newAlertsToAdd.length,
@@ -294,8 +281,8 @@ const addAlertsToCache = (alerts) => {
  * @returns {void}
  */
 const clearCachedAlerts = () => {
-  alertsCache.set(ALERTS_KEY, []);
-  alertsMapCache.set(ALERTS_MAP_KEY, new Map());
+  cache[ALERTS_KEY] = [];
+  cache[ALERTS_MAP_KEY] = new Map();
 };
 
 /**
@@ -307,7 +294,7 @@ const clearCachedAlerts = () => {
 const getCachedAlertById = (alertId) => {
   if (!alertId) return null;
 
-  const alertsMap = alertsMapCache.get(ALERTS_MAP_KEY);
+  const alertsMap = cache[ALERTS_MAP_KEY];
   if (!alertsMap) return null;
 
   return alertsMap.get(alertId) || null;
@@ -318,7 +305,7 @@ const getCachedAlertById = (alertId) => {
  * @returns {string|null} ISO timestamp of the latest alert, or null if no alerts
  */
 const getLatestAlertTimestamp = () => {
-  const alerts = alertsCache.get(ALERTS_KEY) || [];
+  const alerts = cache[ALERTS_KEY] || [];
   if (alerts.length > 0 && alerts[0].alertTimestamp) {
     const timestamp = alerts[0].alertTimestamp;
     // Ensure it's a valid ISO timestamp string
@@ -336,7 +323,7 @@ const getLatestAlertTimestamp = () => {
  * @returns {Array<Object>} Array of list objects with value and display properties
  */
 const getCachedLists = () => {
-  return listsCache.get(LISTS_KEY) || [];
+  return cache[LISTS_KEY] || [];
 };
 
 /**
@@ -346,7 +333,7 @@ const getCachedLists = () => {
  */
 const setCachedLists = (lists) => {
   if (lists && Array.isArray(lists) && lists.length > 0) {
-    listsCache.set(LISTS_KEY, lists);
+    cache[LISTS_KEY] = lists;
   }
 };
 

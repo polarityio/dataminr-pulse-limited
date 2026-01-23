@@ -8,9 +8,9 @@ const {
 
 const { DateTime } = require('luxon');
 
-const NodeCache = require('node-cache');
-// Token cache: TTL handled by token expiration, disable automatic checks
-const tokenCache = new NodeCache({ checkperiod: 0 });
+// Token cache with TTL support
+const tokenCache = new Map();
+const tokenExpiry = new Map();
 
 // Rate limiter state - tracks API rate limit info from response headers
 const rateLimitState = {
@@ -246,7 +246,8 @@ const setLogger = (logger) => {
  */
 const clearToken = (options) => {
   const tokenCacheKey = options.clientId + options.clientSecret;
-  tokenCache.del(tokenCacheKey);
+  tokenCache.delete(tokenCacheKey);
+  tokenExpiry.delete(tokenCacheKey);
 };
 
 /**
@@ -262,10 +263,14 @@ const getToken = async (options, forceRefresh = false) => {
   const tokenCacheKey = options.clientId + options.clientSecret;
   
   if (forceRefresh) {
-    tokenCache.del(tokenCacheKey);
+    tokenCache.delete(tokenCacheKey);
+    tokenExpiry.delete(tokenCacheKey);
   } else {
     const cachedToken = tokenCache.get(tokenCacheKey);
-    if (cachedToken) return cachedToken;
+    const expiryTime = tokenExpiry.get(tokenCacheKey);
+    if (cachedToken && expiryTime && Date.now() < expiryTime) {
+      return cachedToken;
+    }
   }
 
   // Set userOptions before making request
@@ -291,11 +296,8 @@ const getToken = async (options, forceRefresh = false) => {
     const token = tokenResponse.body.dmaToken;
     const expireTime = tokenResponse.body.expire;
 
-    tokenCache.set(
-      tokenCacheKey,
-      token,
-      DateTime.fromMillis(expireTime).diffNow('seconds').seconds
-    );
+    tokenCache.set(tokenCacheKey, token);
+    tokenExpiry.set(tokenCacheKey, expireTime);
 
     return token;
   } catch (error) {
