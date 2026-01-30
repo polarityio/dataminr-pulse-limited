@@ -1,4 +1,12 @@
-const { STATE_KEY, ALERTS_KEY, LISTS_KEY, ALERTS_MAP_KEY, CACHE_MAX_AGE_MS } = require('../../constants');
+const { logging: { getLogger } } = require('polarity-integration-utils');
+const {
+  STATE_KEY,
+  ALERTS_KEY,
+  LISTS_KEY,
+  ALERTS_MAP_KEY,
+  CACHE_MAX_AGE_MS,
+  DEFAULT_ALERT_TYPES_TO_WATCH
+} = require('../../constants');
 
 // Native in-memory cache stores
 const cache = {
@@ -15,6 +23,7 @@ const cache = {
  * @returns {number|null} returns.lastPollTime - epoch milliseconds timestamp of last poll
  * @returns {number} returns.alertCount - Number of alerts in last poll
  * @returns {number} returns.totalAlertsProcessed - Total alerts processed since reset
+ * @returns {number} returns.lastSince - Max zip entry number from last poll (used as `since` on next request)
  */
 const getPollingState = () => {
   return (
@@ -22,7 +31,8 @@ const getPollingState = () => {
       lastCursor: null,
       lastPollTime: null,
       alertCount: 0,
-      totalAlertsProcessed: 0
+      totalAlertsProcessed: 0,
+      lastSince: 0
     }
   );
 };
@@ -34,6 +44,7 @@ const getPollingState = () => {
  * @param {number} [updates.lastPollTime] - epoch milliseconds timestamp of last poll
  * @param {number} [updates.alertCount] - Number of alerts in current poll
  * @param {number} [updates.totalAlertsProcessed] - Total alerts processed
+ * @param {number} [updates.lastSince] - Max zip entry number for next `since` query param
  * @returns {Object} Updated polling state object
  */
 const updatePollingState = (updates) => {
@@ -93,11 +104,11 @@ const filterAlertsByAge = (alerts, alertFilterTimestamp = null) => {
 
 /**
  * Get all cached alerts (filtered to remove alerts older than 1 hour)
- * @param {Array<string>} [listIds] - Optional array of list IDs to filter by. If provided, only returns alerts that match any of the list IDs.
  * @param {string|null} alertFilterTimestamp - Optional ISO timestamp to filter alerts (returns alerts after this timestamp)
  * @returns {Array<Object>} Array of alert objects (sorted newest first)
  */
-const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
+const getCachedAlerts = (alertFilterTimestamp = null) => {
+  const Logger = getLogger();
   const alerts = cache[ALERTS_KEY] || [];
   
   // Early return if no alerts
@@ -132,12 +143,10 @@ const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
   if (alertFilterTimestamp) {
     filterTimestampMs = new Date(alertFilterTimestamp).getTime();
   }
+
   
-  // Convert listIds to Set for O(1) lookup
-  const listIdsSet = listIds && listIds.length > 0 ? new Set(listIds) : null;
-  
-  // Single-pass filter for both timestamp and listIds
-  if (filterTimestampMs !== null || listIdsSet !== null) {
+  // Single-pass filter for both timestamp
+  if (filterTimestampMs !== null) {
     filteredAlerts = filteredAlerts.filter((alert) => {
       // Check timestamp if filter provided
       if (filterTimestampMs !== null) {
@@ -146,24 +155,6 @@ const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
         if (alertTime <= filterTimestampMs) return false;
       }
       
-      // Check listIds if filter provided
-      if (listIdsSet !== null) {
-        if (!alert.listsMatched || !Array.isArray(alert.listsMatched)) {
-          return false;
-        }
-        // Check if any matched list ID is in the set
-        let hasMatch = false;
-        for (let i = 0; i < alert.listsMatched.length; i++) {
-          const matchedList = alert.listsMatched[i];
-          if (matchedList && matchedList.id) {
-            if (listIdsSet.has(String(matchedList.id).trim())) {
-              hasMatch = true;
-              break;
-            }
-          }
-        }
-        if (!hasMatch) return false;
-      }
       
       return true;
     });
@@ -172,17 +163,47 @@ const getCachedAlerts = (listIds = null, alertFilterTimestamp = null) => {
   return filteredAlerts;
 };
 
+/** Normalized set of alert type names to cache (lowercase) */
+const getAlertTypesToWatchSet = () => {
+  const types = DEFAULT_ALERT_TYPES_TO_WATCH || [];
+  return new Set(
+    types.map((t) =>
+      t && typeof t === 'object' && t.value
+        ? String(t.value).toLowerCase()
+        : String(t).toLowerCase()
+    )
+  );
+};
+
 /**
  * Add alerts to the global cache
  * Alerts are kept sorted by timestamp (newest first) for efficient timestamp lookups
  * Also maintains a Map for O(1) lookups by alertId
+ * Only alerts whose type is in DEFAULT_ALERT_TYPES_TO_WATCH are added.
  * @param {Array<Object>} alerts - Array of alert objects to add (should be sorted newest first)
  * @returns {Object} Result object
  * @returns {number} returns.added - Number of new alerts added
  * @returns {number} returns.total - Total alerts in cache after adding
  */
 const addAlertsToCache = (alerts) => {
+  const Logger = getLogger();
   if (!alerts || alerts.length === 0) {
+    return { added: 0, total: cache[ALERTS_KEY]?.length || 0 };
+  }
+
+  const alertTypesSet = getAlertTypesToWatchSet();
+  const allowedAlerts =
+    alertTypesSet.size === 0
+      ? alerts
+      : alerts.filter((alert) => {
+          const name =
+            alert.alertType && alert.alertType.name
+              ? alert.alertType.name.toLowerCase()
+              : 'alert';
+          return alertTypesSet.has(name);
+        });
+
+  if (allowedAlerts.length === 0) {
     return { added: 0, total: cache[ALERTS_KEY]?.length || 0 };
   }
 
@@ -194,7 +215,7 @@ const addAlertsToCache = (alerts) => {
   const cutoffTime = now - CACHE_MAX_AGE_MS;
   const newAlertsToAdd = [];
   
-  alerts.forEach((alert) => {
+  allowedAlerts.forEach((alert) => {
     if (!alert.alertId) {
       // No ID - add it but it won't be in map
       newAlertsToAdd.push(alert);

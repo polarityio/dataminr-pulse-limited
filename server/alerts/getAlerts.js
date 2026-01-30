@@ -1,153 +1,84 @@
 const {
-  logging: { getLogger },
-  errors: { parseErrorToReadableJson }
+  logging: { getLogger }
 } = require('polarity-integration-utils');
+const AdmZip = require('adm-zip');
 
 const { requestWithDefaults } = require('../request');
-const { DEFAULT_PAGE_SIZE, ROUTE_PREFIX } = require('../../constants');
-const { getCachedAlertById, addAlertsToCache } = require('./stateManager');
+const { getCachedAlertById } = require('./stateManager');
 
-const parseNextPageCursor = (nextPage) => {
-  try {
-    if (!nextPage) return null;
-    const urlParts = nextPage.split('?');
-    if (urlParts.length > 1) {
-      const urlParams = new URLSearchParams(urlParts[1]);
-      return urlParams.get('from');
-    }
-  } catch (error) {
-    const Logger = getLogger();
-    Logger.warn({ error, nextPage }, 'Failed to parse nextPage URL for cursor');
-  }
-};
-
-const parsePreviousPageCursor = (previousPage) => {
-  try {
-    if (!previousPage) return null;
-    const urlParts = previousPage.split('?');
-    if (urlParts.length > 1) {
-      const urlParams = new URLSearchParams(urlParts[1]);
-      return urlParams.get('to');
-    }
-  } catch (error) {
-    const Logger = getLogger();
-    Logger.warn({ error, previousPage }, 'Failed to parse previousPage URL for cursor');
-    return null;
-  }
+/**
+ * Parse numeric part from zip entry name (e.g. "301.json" -> 301, "302.jsonl" -> 302).
+ * @param {string} entryName - Zip entry name
+ * @returns {number|null} Parsed number or null if not a numeric filename
+ */
+const parseEntryNumber = (entryName) => {
+  const match = entryName.match(/^(\d+)\.(jsonl?)$/i);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return Number.isNaN(n) ? null : n;
 };
 
 /**
- * Get alerts from the API with pagination support
- * @param {Object} options - Configuration options
- * @param {string} options.url - Base URL for the API
- * @param {Object} parameters - Optional parameters for the query
- * @param {Array<string>} [parameters.listIds] - Optional array of list IDs to filter alerts
- * @param {string} [parameters.to] - Optional cursor value from previousPage URL's 'to' parameter for fetching alerts before this point
- * @param {string} [parameters.from] - Optional cursor value from nextPage URL's 'from' parameter for fetching alerts after this point
- * @param {number} [parameters.pageSize] - Optional number of alerts to return (overrides timestamp on first query)
- * @returns {Promise<Object>} Resolves with object containing alerts array and pagination info
- * @returns {Array<Object>} returns.alerts - Array of alert objects
- * @returns {string|null} returns.nextPageCursor - Next page URL or null
- * @returns {string|null} returns.previousPageCursor - Previous page URL or null
+ * Extract alerts from all JSON/JSONL files in zip buffer (in-memory).
+ * Zip may contain multiple JSON files; each is parsed and alerts are combined.
+ * Also computes max numeric filename for use as `since` on the next poll.
+ * @param {Buffer} zipBuffer - Raw zip file buffer from API
+ * @returns {{ alerts: Array<Object>, maxSince: number }} Combined alerts and max entry number
  */
-const getAlerts = async (
-  options,
-  { listIds = null, to = null, from = null, pageSize = null } = {}
-) => {
+const extractAlertsFromZipBuffer = (zipBuffer) => {
+  const zip = new AdmZip(zipBuffer);
+  const entries = zip.getEntries();
+  const jsonEntries = entries.filter(
+    (e) => !e.isDirectory && (e.entryName.endsWith('.json') || e.entryName.endsWith('.jsonl'))
+  );
+  if (jsonEntries.length === 0) {
+    throw new Error('No JSON file found in zip');
+  }
+  const allAlerts = [];
+  let maxSince = 0;
+  for (const entry of jsonEntries) {
+    const num = parseEntryNumber(entry.entryName);
+    if (num !== null && num > maxSince) maxSince = num;
+    const data = entry.getData();
+    const parsed = JSON.parse(data.toString('utf8'));
+    const alerts = Array.isArray(parsed) ? parsed : (parsed.alerts || []);
+    allAlerts.push(...alerts);
+  }
+  return { alerts: allAlerts, maxSince };
+};
+
+/**
+ * Get alerts from the API (proxy returns a zip; we extract and parse as JSON).
+ * No pagination - single zip payload with alerts.
+ * @param {Object} options - Configuration options
+ * @returns {Promise<Object>} Resolves with object containing alerts array
+ */
+const getAlerts = async (options) => {
   const Logger = getLogger();
 
   try {
-    // Use pageSize if it exists and is greater than DEFAULT_PAGE_SIZE, otherwise use DEFAULT_PAGE_SIZE
-    const effectivePageSize =
-      typeof pageSize === 'number' && pageSize > DEFAULT_PAGE_SIZE
-        ? pageSize
-        : DEFAULT_PAGE_SIZE;
-
-    const queryParams = { pageSize: effectivePageSize };
-
-    // Add pagination cursor if provided - prefer "from" over "to" if both are provided
-    // If pageSize is specified, only add the cursor if it is not the initial query
-    if (!pageSize) {
-      if (from) {
-        queryParams.from = from;
-      } else if (to) {
-        queryParams.to = to;
-      }
-    }
-
-    // Add list IDs if configured
-    if (listIds && listIds.length > 0) {
-      queryParams.lists = listIds.join(',');
-    }
-
-    const fullUrl = `${options.url}/${ROUTE_PREFIX}/v1/alerts`;
-    Logger.debug(
-      {
-        url: fullUrl,
-        queryParams
-      },
-      'Fetching alerts from the Dataminr API'
-    );
-
     const response = await requestWithDefaults({
-      route: `${ROUTE_PREFIX}/v1/alerts`,
       options,
-      qs: queryParams,
       method: 'GET'
     });
 
-    const alerts = (response.body && response.body.alerts) || [];
-    const nextPage = (response.body && response.body.nextPage) || null;
-    const previousPage = (response.body && response.body.previousPage) || null;
+    const zipBuffer = Buffer.isBuffer(response.body) ? response.body : Buffer.from(response.body);
+    const { alerts, maxSince } = extractAlertsFromZipBuffer(zipBuffer);
 
     Logger.debug(
-      {
-        alertTimestamps: alerts.map((alert) => alert.alertTimestamp).slice(0, 3),
-        statusCode: response.statusCode,
-        nextPage: nextPage,
-        previousPage: previousPage,
-        alertCount: alerts.length,
-        pageSize: pageSize
-      },
-      'Dataminr API response received'
+      { alertCount: alerts.length, maxSince, statusCode: response.statusCode },
+      'Dataminr API response received (from zip)'
     );
 
     return {
-      alerts: alerts,
-      nextPage: nextPage,
-      previousPage: previousPage,
-      nextPageCursor: parseNextPageCursor(nextPage),
-      previousPageCursor: parsePreviousPageCursor(previousPage)
+      alerts,
+      maxSince
     };
   } catch (error) {
-    // Handle rate limiting (429) with a cleaner message
     const statusCode = error.statusCode || (error.meta && error.meta.statusCode);
     const message = error.message || error.detail || 'Unknown error';
-    if (statusCode === 429 || statusCode === '429' || (typeof message === 'string' && message.includes('429'))) {
-      Logger.warn(
-        {
-          statusCode: 429,
-          message: 'Rate limit exceeded - too many requests to Dataminr API'
-        },
-        'Rate limit exceeded while fetching alerts'
-      );
-      // Return empty results instead of throwing for rate limits
-      return {
-        alerts: [],
-        nextPage: null,
-        previousPage: null,
-        nextPageCursor: null,
-        previousPageCursor: null
-      };
-    }
-
-    // For other errors, log with minimal stack trace info
     Logger.error(
-      {
-        statusCode: statusCode,
-        message: message,
-        detail: error.detail
-      },
+      { statusCode, message: message, detail: error.detail },
       'Getting Alerts Failed'
     );
     throw error;
@@ -157,19 +88,14 @@ const getAlerts = async (
 /**
  * Get a single alert by ID from the API
  * @param {string} alertId - Alert ID to fetch
- * @param {Object} options - Configuration options
- * @param {string} options.url - Base URL for the API
- * @param {Array<string>} [options.listIds] - Optional array of list IDs to include match reasons
  * @returns {Promise<Object>} Resolves with alert object
  */
-const getAlertById = async (alertId, options) => {
+const getAlertById = async (alertId) => {
   const Logger = getLogger();
 
   if (!alertId) {
     throw new Error('Alert ID is required');
   }
-
-  const listIds = options && options.listIds ? options.listIds : null;
 
   // Check cache first (no age filtering for direct lookups)
   const cachedAlert = getCachedAlertById(alertId);
@@ -178,113 +104,7 @@ const getAlertById = async (alertId, options) => {
     Logger.debug({ alertId }, 'Alert found in cache lookup)');
     return cachedAlert;
   }
-
-  try {
-    const queryParams = {};
-
-    // Add list IDs if configured (to include match reasons)
-    if (listIds && listIds.length > 0) {
-      queryParams.lists = listIds.join(',');
-    }
-
-    const route = `${ROUTE_PREFIX}/v1/alerts/${encodeURIComponent(alertId)}`;
-    const fullUrl = `${options.url}/${route}`;
-    Logger.debug(
-      {
-        route,
-        fullUrl,
-        queryParams,
-        alertId,
-        encodedAlertId: encodeURIComponent(alertId)
-      },
-      'Fetching alert by ID from Dataminr API'
-    );
-
-    const response = await requestWithDefaults({
-      route,
-      options,
-      qs: Object.keys(queryParams).length > 0 ? queryParams : undefined,
-      method: 'GET'
-    });
-
-    Logger.debug(
-      {
-        statusCode: response.statusCode,
-        responseBody: response.body,
-        hasAlerts: !!(response.body && response.body.alerts),
-        hasAlertId: !!(response.body && response.body.alertId),
-        alertsLength:
-          response.body && response.body.alerts ? response.body.alerts.length : 0
-      },
-      'Dataminr API response received for alert by ID'
-    );
-
-    // Handle 404 - alert not found
-    if (response.statusCode === 404) {
-      Logger.warn({ alertId }, 'Alert not found (404)');
-      return null;
-    }
-
-    // The API can return the alert in two formats:
-    // 1. Wrapped in an AlertResponse object with an alerts array: { alerts: [alert] }
-    // 2. Directly as an alert object: { alertId: "...", headline: "...", ... }
-    let alert = null;
-    if (response.body) {
-      // Check if it's wrapped in an alerts array (AlertResponse format)
-      if (response.body.alerts && Array.isArray(response.body.alerts)) {
-        if (response.body.alerts.length > 0) {
-          alert = response.body.alerts[0];
-        } else {
-          Logger.warn(
-            { alertId, responseBody: response.body },
-            'Alert response contains empty alerts array'
-          );
-          return null;
-        }
-      } else if (response.body.alertId) {
-        // Check if it's a direct alert object (has alertId property)
-        alert = response.body;
-      }
-    }
-
-    // Cache the alert if we successfully retrieved it
-    if (alert) {
-      try {
-        addAlertsToCache([alert]);
-        Logger.debug({ alertId }, 'Alert added to cache after API fetch');
-      } catch (cacheError) {
-        // Log but don't fail if caching fails
-        Logger.warn({ alertId, cacheError }, 'Failed to cache alert after fetch');
-      }
-      return alert;
-    }
-
-    Logger.warn(
-      { alertId, responseBody: response.body, statusCode: response.statusCode },
-      'Unexpected response structure from the Dataminr API'
-    );
-    return null;
-  } catch (error) {
-    const err = parseErrorToReadableJson(error);
-
-    // Check if it's a 404 error
-    if (error.statusCode === 404 || (error.meta && error.meta.statusCode === 404)) {
-      Logger.warn({ alertId }, 'Alert not found (404 error)');
-      return null;
-    }
-
-    Logger.error(
-      {
-        formattedError: err,
-        error,
-        alertId,
-        errorStatus: error.statusCode || (error.meta && error.meta.statusCode),
-        errorBody: error.body || (error.meta && error.meta.body)
-      },
-      'Getting Alert by ID Failed'
-    );
-    throw error;
-  }
+  return null;
 };
 
 module.exports = {

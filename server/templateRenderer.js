@@ -880,7 +880,7 @@ async function processLinkedAlerts(alert, options, timezone) {
       );
     })
     .map(function (linkedAlertItem) {
-      return getAlertById(linkedAlertItem.parentAlertId, options);
+      return getAlertById(linkedAlertItem.parentAlertId);
     });
 
   // Fetch all linked alerts in parallel

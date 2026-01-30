@@ -4,20 +4,18 @@ const {
 } = require('polarity-integration-utils');
 
 const { validateOptions } = require('./server/userOptions');
-const { removePrivateIps } = require('./server/dataTransformations');
 const {
   pollAlerts,
-  pollLists,
   resetPollingState,
-  searchAlerts,
-  getAlertById,
-  parseListConfig
+  getAlertById
 } = require('./server/alerts');
 const {
   getCachedAlerts,
   getLatestAlertTimestamp,
   getCachedLists,
-  addAlertsToCache
+  addAlertsToCache,
+  getPollingState,
+  updatePollingState
 } = require('./server/alerts/stateManager');
 const { getAlerts } = require('./server/alerts/getAlerts');
 const { setLogger: setRequestLogger } = require('./server/request');
@@ -26,16 +24,13 @@ const {
   renderAlertNotification
 } = require('./server/templateRenderer');
 
-const assembleLookupResults = require('./server/assembleLookupResults');
 const {
   DEFAULT_ALERT_TYPES_TO_WATCH,
-  TRIAL_MODE,
-  LISTS_POLL_INTERVAL_MS
+  POLL_INTERVAL_MS
 } = require('./constants');
 
 let Logger = null;
 let alertPollingInterval = null;
-let listsPollingInterval = null;
 let pollingInitialized = false;
 
 // Cache for alert type filters (per user configuration)
@@ -43,7 +38,7 @@ const alertTypeFilterCache = new Map();
 
 /**
  * Initialize polling for alerts
- * @param {Object} options - Configuration options containing clientId, clientSecret, and pollInterval
+ * @param {Object} options - Configuration options containing clientId, clientSecret
  * @returns {Promise<void>} Resolves when polling is initialized
  */
 const initializePolling = async (options) => {
@@ -61,10 +56,6 @@ const initializePolling = async (options) => {
   // Reset polling state on first initialization
   resetPollingState();
   pollAlerts(options);
-  pollLists(options);
-
-  // Set up polling interval for alerts - admin configurable
-  const alertPollIntervalMs = options.pollInterval * 1000; // Convert seconds to milliseconds
 
   alertPollingInterval = setInterval(async () => {
     try {
@@ -72,19 +63,11 @@ const initializePolling = async (options) => {
     } catch (error) {
       Logger.error({ error }, 'Error in polling interval');
     }
-  }, alertPollIntervalMs);
-
-  listsPollingInterval = setInterval(async () => {
-    try {
-      pollLists(options);
-    } catch (error) {
-      Logger.error({ error }, 'Error in lists polling interval');
-    }
-  }, LISTS_POLL_INTERVAL_MS);
+  }, POLL_INTERVAL_MS);
 
   pollingInitialized = true;
 
-  Logger.info({ pollIntervalSeconds: options.pollInterval }, 'Polling started');
+  Logger.info({ pollIntervalMs: POLL_INTERVAL_MS }, 'Polling started');
 };
 
 /**
@@ -96,64 +79,14 @@ const initializePolling = async (options) => {
  */
 const doLookup = async (entities, options, cb) => {
   try {
-    // Only gets run in the Pulse integration - FirstAlert has no configured entities
     Logger.debug({ entities }, 'Entities');
 
-    const searchableEntities = removePrivateIps(entities);
-    const alerts = await searchAlerts(searchableEntities, options);
-
-    // Cache all alerts from search results for future lookups
-    const allAlerts = [];
-    if (alerts && Array.isArray(alerts)) {
-      alerts.forEach((alertResult) => {
-        if (alertResult && alertResult.result && Array.isArray(alertResult.result)) {
-          allAlerts.push(...alertResult.result);
-        }
-      });
-      if (allAlerts.length > 0) {
-        addAlertsToCache(allAlerts);
-        Logger.debug(
-          { alertCount: allAlerts.length },
-          'Cached alerts from search results'
-        );
-      }
-    }
-
-    Logger.trace({ alerts, searchableEntities });
-
-    let lookupResults;
-    if (!TRIAL_MODE) {
-      lookupResults = await assembleLookupResults(entities, alerts, options);
-    } else {
-      // For trial version: return count with trial message instead of real results
-      lookupResults = entities.map((entity) => {
-        // Find alerts for this entity (alerts structure: [{resultId, result: [...]}, ...])
-        const entityResult = alerts.find(
-          (alertResult) => alertResult.resultId === entity.value
-        );
-        const alertCount =
-          entityResult && Array.isArray(entityResult.result)
-            ? entityResult.result.length
-            : 0;
-
-        return {
-          entity,
-          data:
-            alertCount > 0
-              ? {
-                  summary: [`Alerts: ${alertCount}`],
-                  details: {
-                    trialSearch: true,
-                    alertCount: alertCount,
-                    alerts: [] // Empty array - no real results for trial
-                  }
-                }
-              : null
-        };
-      });
-    }
-
-    Logger.trace({ lookupResults }, 'Lookup Results');
+    const lookupResults = entities.map((entity) => {
+      return {
+        entity,
+        data: null
+      };
+    });
 
     cb(null, lookupResults);
   } catch (error) {
@@ -206,10 +139,7 @@ const shutdown = () => {
  */
 const createAlertTypeFilter = (options) => {
   // Create cache key from alert types configuration
-  const alertTypesToWatch =
-    options.setAlertTypesToWatch && options.setAlertTypesToWatch.length > 0
-      ? options.setAlertTypesToWatch
-      : DEFAULT_ALERT_TYPES_TO_WATCH;
+  const alertTypesToWatch = DEFAULT_ALERT_TYPES_TO_WATCH;
   
   // Create stable cache key (JSON string of sorted array)
   const cacheKey = JSON.stringify(
@@ -270,7 +200,6 @@ const onMessage = async (payload, options, cb) => {
   try {
     // Initialize polling on first message if not already initialized
     initializePolling(options);
-    const listIds = parseListConfig(options.setListsToWatch);
 
     const { action } = payload;
 
@@ -289,7 +218,7 @@ const onMessage = async (payload, options, cb) => {
         const lastAlertTimestamp = getLatestAlertTimestamp() || new Date().toISOString();
 
         // Parse count parameter (from URL or payload)
-        const alertCount = countParam ? parseInt(countParam, 10) : null;
+        const alertCount = countParam != null ? parseInt(countParam, 10) : null;
 
         // Use provided timestamp or default to current time if not provided
         // If alertCount is provided, don't filter by timestamp (return null)
@@ -301,19 +230,21 @@ const onMessage = async (payload, options, cb) => {
         const alertTypeFilter = createAlertTypeFilter(options);
 
         try {
-          // Get alerts from global cache (filtered by listIds if provided)
-          const cachedAlerts = getCachedAlerts(listIds, alertFilterTimestamp);
+          const cachedAlerts = getCachedAlerts(alertFilterTimestamp);
           // Filter cached alerts by alert type
           let alerts = cachedAlerts.filter(alertTypeFilter);
 
           // Check if we need to query API (only if count is requested and cache doesn't have enough)
           if (alertCount && alerts.length < alertCount) {
             try {
+              const state = getPollingState();
+              const since = state.lastSince ?? 0;
               // Query API for alerts (count overrides timestamp for initial query)
-              const { alerts: apiAlerts } = await getAlerts(options, {
-                listIds: listIds,
-                pageSize: alertCount
-              });
+              const { alerts: apiAlerts, maxSince } = await getAlerts({ ...options, since });
+
+              if (maxSince !== undefined && maxSince !== null) {
+                updatePollingState({ lastSince: maxSince });
+              }
 
               // Cache the fetched alerts for future lookups
               if (apiAlerts && apiAlerts.length > 0) {
@@ -372,8 +303,7 @@ const onMessage = async (payload, options, cb) => {
           return cb({ detail: 'Missing alertId in payload' });
         }
 
-        const optionsWithListIds = { ...options, listIds: listIds };
-        getAlertById(requestedAlertId, optionsWithListIds)
+        getAlertById(requestedAlertId)
           .then((alert) => {
             if (alert) {
               // Cache the fetched alert for future lookups
@@ -407,13 +337,13 @@ const onMessage = async (payload, options, cb) => {
         const { alertId: renderAlertId, timezone: renderTimezone } = payload;
         if (!renderAlertId) {
           return cb({ detail: 'Missing alertId in payload' });
-        }
-        const renderOptionsWithListIds = { ...options, listIds: listIds };
-        const renderOptionsWithTimezone = renderTimezone
-          ? Object.assign({}, renderOptionsWithListIds, { timezone: renderTimezone })
-          : renderOptionsWithListIds;
+       }
 
-        getAlertById(renderAlertId, renderOptionsWithListIds)
+        const renderOptionsWithTimezone = renderTimezone
+          ? Object.assign({}, options, { timezone: renderTimezone })
+          : options;
+
+        getAlertById(renderAlertId)
           .then(async (alert) => {
             if (!alert) {
               Logger.warn({ alertId: renderAlertId }, 'Alert not found when rendering detail');

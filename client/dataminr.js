@@ -433,7 +433,7 @@ class DataminrIntegration {
     this.userConfig = userConfig;
     this.userOptions = userOptions;
     this.pollingInterval = null;
-    this.pollIntervalMs = 10000; // Poll Polarity server every 10 seconds
+    this.pollIntervalMs = 60000; // Poll Polarity server every 60 seconds
     this.isPollingInProgress = false;
     this.currentUser = null;
     this.currentAlertIds = new Map(); // Map of alertId -> { id, headline, type, alertTimestamp }
@@ -494,7 +494,16 @@ class DataminrIntegration {
    */
   async initPolarityPin() {
     const notificationContainer = byId('notification-overlay-scroll-container');
+    
     if (notificationContainer) {
+      const hasJewelTheme =
+        document.body &&
+        document.body.classList &&
+        document.body.classList.contains('dm-jewel-theme');
+      if (!hasJewelTheme) {
+        notificationContainer.style.height = '100%';
+      }
+      
       // Add pinned polarity container div before notificationContainer
       let pinnedPolarityContainer = byId('polarity-pin-container');
       if (!pinnedPolarityContainer) {
@@ -969,7 +978,7 @@ class DataminrIntegration {
 
         // If no HTML returned, alert might not exist
         if (!detailHtml) {
-          detailContainer.innerHTML = '<div style="padding: 20px; text-align: center;">Alert not found</div>';
+          detailContainer.innerHTML = '<div style="padding: 20px; text-align: center;">Alert details have expired.</div>';
           return;
         }
 
@@ -1752,7 +1761,7 @@ class DataminrIntegration {
   startPolling() {
     // Poll immediately
     const countParam = this.getUrlParameter('alertCount');
-    const count = countParam ? parseInt(countParam, 10) : null;
+    const count = countParam ? parseInt(countParam, 10) : 3;
     if (count) {
       this.loadAlerts(count);
     } else {
@@ -1810,37 +1819,6 @@ class DataminrIntegration {
     this.startPolling();
   }
 
-  /**
-   * Update the configuration options for the Dataminr available lists
-   * @private
-   */
-  async updateListConfigSelect() {
-    try {
-      // Fetch lists from backend
-      const response = await this.sendIntegrationMessage({
-        action: 'getLists'
-      });
-
-      if (!response || !response.lists) {
-        return [{ value: '0', display: 'All Lists' }];
-      }
-
-      // Filter out any lists without value or display (already in correct format from backend)
-      const choices = response.lists.filter((list) => list.value && list.display);
-
-      const integrationOptions = this.userConfig.integrationOptions;
-
-      if (integrationOptions) {
-        const opt = integrationOptions.findBy('key', 'setListsToWatch');
-        if (opt) {
-          Ember.set(opt, 'options', choices);
-        }
-      }
-    } catch (error) {
-      console.error('Error updating lists to watch:', error);
-      return [{ value: '0', display: 'All Lists' }];
-    }
-  }
 
   /**
    * Initialize the Dataminr integration
@@ -1855,22 +1833,10 @@ class DataminrIntegration {
       }
     }, 1000);
 
-    // Update lists to watch asynchronously
-    this.updateListConfigSelect().catch((error) => {
-      console.error('Error updating lists to watch:', error);
-    });
 
     const dataminrContainer = this.getDataminrContainerForIntegration();
     this.getDataminrDetailsContainerForIntegration();
 
-    if (!this.userOptions || !this.userOptions.stickyAlerts) {
-      // Sticky alerts disabled - remove container and stop polling
-      if (dataminrContainer) {
-        dataminrContainer.remove();
-      }
-      this.stopPolling();
-      return;
-    }
 
     // Sticky alerts enabled - initialize or use existing container
     if (!dataminrContainer) {

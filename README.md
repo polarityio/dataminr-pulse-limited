@@ -1,6 +1,6 @@
 # Polarity - Dataminr Pulse (Limited) Integration
 
-This is a limited version of the full [Dataminr Pulse Integration](https://github.com/polarityio/dataminr).  Restrictions include: Alerts only on `Flash` and `Urgent`.  Search will only show that there are alert matches.
+This is a limited version of the full [Dataminr Pulse Integration](https://github.com/polarityio/dataminr).  Restrictions include: Alerts only on `Flash` and `Urgent`.
 
 Dataminr delivers the earliest warnings on high impact events and critical information far in advance of other sources.
 
@@ -13,40 +13,12 @@ For more information on Dataminr, please visit [official website](https://www.da
 | *Alerts Example*                            |
 
 ## Dataminr Integration Options
-### Dataminr API URL
-The base URL of the Dataminr API including the schema (i.e., https://)
-- Default: `https://api.dataminr.com`
+### ThreatConnect CAL Instance Id
+ThreatConnect CAL Instance Id
 - Admin Only: Yes
 
-### Client ID
-Your Client ID Credential
-- Admin Only: Yes
-
-### Client Secret
-Your Client Secret Credential
-- Admin Only: Yes
-
-### Pin Dataminr Alerts
-Pin Dataminr Alerts to the top of the Polarity UI
-- Default: `false`
-- User Editable: Yes
-
-### Filter Lists to Watch
-Filter the lists to watch for alerts
-- Default: `[]` (all lists)
-- User Editable: Yes
-- Multiple Selection: Yes
-
-### Filter Alert Types
-Filter the type of alert - limited
-- Default: [`flash`, `urgent`]
-- User Editable: Yes
-- Multiple Selection: Yes
-
-### Poll Interval
-The interval in seconds for the server to poll for new Alerts
-- Default: `60` seconds
-- Minimum: `30` seconds
+### ThreatConnect CAL API Key
+ThreatConnect CAL API Key associated with the Instance ID
 - Admin Only: Yes
 
 ## Installation Instructions
