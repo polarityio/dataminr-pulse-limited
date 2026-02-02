@@ -1,6 +1,7 @@
 module.exports = {
   LISTS_POLL_INTERVAL_MS: 5 * 60 * 1000, // 5 minutes in milliseconds
   CACHE_MAX_AGE_MS: 72 * 60 * 60 * 1000, // 72 hours in milliseconds
+  CACHE_MAX_ITEMS: 100, // When cache exceeds this, oldest items are evicted (FIFO)
   DEFAULT_PAGE_SIZE: 40, // Default page size for alerts
   STATE_KEY: 'pollingState',
   ALERTS_KEY: 'alerts',
