@@ -16,19 +16,14 @@ const validateOptions = async (options, callback) => {
     }
 
     const stringOptionsErrorMessages = {
-      url: '* Required',
       clientId: '* Required',
       clientSecret: '* Required'
     };
 
-    const stringValidationErrors = validateStringOptions(
+    const errors = validateStringOptions(
       stringOptionsErrorMessages,
       options
     );
-
-    const urlValidationError = validateUrlOption(options, 'url');
-
-    const errors = stringValidationErrors.concat(urlValidationError);
 
     callback(null, errors);
   } catch (error) {
