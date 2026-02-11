@@ -11,5 +11,5 @@ module.exports = {
   DEFAULT_ALERT_TYPES_TO_WATCH: ['flash', 'urgent'],
   TRIAL_MODE: true,
   POLL_INTERVAL_MS: 360 * 1000, // 6 minutes in milliseconds
-  CAL_API_URL: 'https://helix-dev.threatconnect.com/helix/publications/v1/download?since=0&owner=70001'
+  CAL_API_URL: 'https://cal.threatconnect.com/helix/publications/v1/download?since=0&owner=70001'
 };
