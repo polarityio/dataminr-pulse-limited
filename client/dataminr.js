@@ -502,6 +502,7 @@ class DataminrIntegration {
         document.body.classList.contains('dm-jewel-theme');
       if (!hasJewelTheme) {
         notificationContainer.style.height = '100%';
+        notificationContainer.style.display = 'block';
       }
       
       // Add pinned polarity container div before notificationContainer
