@@ -40,6 +40,22 @@ function byId(id) {
 }
 
 /**
+ * Get the notification overlay left column scroll container element
+ * @returns {Element|undefined} The notification container element or undefined if not found
+ */
+function getNotificationScrollContainer() {
+  // First try getting the container for the new 2-column layout 
+  let container = byId('notification-overlay-left-column-scroll-container');
+  
+  if(!container) {
+    // If the container doesn't exist, get the older single column layout container as a fallback
+    container = byId('notification-overlay-scroll-container');
+  }
+  
+  return container;
+}
+
+/**
  * Query selector with null safety
  * @param {string} selector - CSS selector
  * @param {Element} root - Root element (optional)
@@ -493,7 +509,7 @@ class DataminrIntegration {
    * @private
    */
   async initPolarityPin() {
-    const notificationContainer = byId('notification-overlay-scroll-container');
+    const notificationContainer = getNotificationScrollContainer();
     
     if (notificationContainer) {
       const hasJewelTheme =
@@ -969,7 +985,7 @@ class DataminrIntegration {
         detailContainer.classList.add('visible');
 
         // Scroll notification overlay to top when alert is selected
-        const notificationContainer = byId('notification-overlay-scroll-container');
+        const notificationContainer = getNotificationScrollContainer();
         if (notificationContainer) {
           notificationContainer.scrollTop = 0;
         }
@@ -1009,7 +1025,7 @@ class DataminrIntegration {
         detailContainer.classList.add('visible');
 
         // Scroll notification overlay to top when alert is selected
-        const notificationContainer = byId('notification-overlay-scroll-container');
+        const notificationContainer = getNotificationScrollContainer();
         if (notificationContainer) {
           notificationContainer.scrollTop = 0;
         }
@@ -1952,7 +1968,7 @@ class DataminrIntegration {
    */
   getScrollableContainer(element) {
     // Check for notification overlay scroll container
-    const notificationContainer = byId('notification-overlay-scroll-container');
+    const notificationContainer = getNotificationScrollContainer();
     if (notificationContainer) {
       return notificationContainer;
     }
@@ -2675,7 +2691,7 @@ class DataminrIntegration {
    * @param {Element} alertDetail - The alert detail element
    */
   hideEntityNotifications(alertDetail) {
-    const notificationContainer = byId('notification-overlay-scroll-container');
+    const notificationContainer = getNotificationScrollContainer();
     if (!notificationContainer) {
       return;
     }
